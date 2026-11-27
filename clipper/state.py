@@ -1,0 +1,155 @@
+"""SQLite state so the 24x7 bot never repeats work after a restart."""
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS campaigns (
+    url TEXT PRIMARY KEY,
+    title TEXT,
+    data TEXT,             -- JSON from the Vyro scan
+    page TEXT,             -- which of our pages it was routed to ('' = skipped)
+    status TEXT,           -- new | skipped | ready | done | failed
+    error TEXT,
+    created_at TEXT,
+    updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS materials (
+    url TEXT,
+    campaign_url TEXT,
+    status TEXT,           -- done | failed
+    error TEXT,
+    PRIMARY KEY (url, campaign_url)
+);
+CREATE TABLE IF NOT EXISTS clips (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_url TEXT,
+    page TEXT,
+    path TEXT UNIQUE,
+    meta TEXT,
+    virality INTEGER,
+    created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS posts (
+    clip_id INTEGER,
+    platform TEXT,         -- youtube | instagram
+    page TEXT,
+    url TEXT,
+    status TEXT,           -- posted | failed
+    error TEXT,
+    attempts INTEGER DEFAULT 0,
+    posted_at TEXT,
+    vyro_status TEXT,      -- NULL | submitted | failed
+    vyro_error TEXT,
+    vyro_attempts INTEGER DEFAULT 0,
+    PRIMARY KEY (clip_id, platform)
+);
+"""
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+class State:
+    def __init__(self, path: str | Path = "bot.db"):
+        self.db = sqlite3.connect(str(path))
+        self.db.row_factory = sqlite3.Row
+        self.db.executescript(SCHEMA)
+        self.db.commit()
+
+    # campaigns
+    def campaign_known(self, url: str) -> bool:
+        return self.db.execute("SELECT 1 FROM campaigns WHERE url=?", (url,)).fetchone() is not None
+
+    def add_campaign(self, url: str, title: str, data: dict, page: str, status: str) -> None:
+        self.db.execute(
+            "INSERT OR IGNORE INTO campaigns VALUES (?,?,?,?,?,?,?,?)",
+            (url, title, json.dumps(data, ensure_ascii=False), page, status, None, now(), now()),
+        )
+        self.db.commit()
+
+    def update_campaign(self, url: str, **fields) -> None:
+        if "data" in fields:
+            fields["data"] = json.dumps(fields["data"], ensure_ascii=False)
+        sets = ", ".join(f"{k}=?" for k in fields)
+        self.db.execute(f"UPDATE campaigns SET {sets}, updated_at=? WHERE url=?", (*fields.values(), now(), url))
+        self.db.commit()
+
+    def campaigns(self, status: str) -> list[sqlite3.Row]:
+        return self.db.execute("SELECT * FROM campaigns WHERE status=? ORDER BY created_at", (status,)).fetchall()
+
+    # materials
+    def material_done(self, url: str, campaign_url: str) -> bool:
+        return self.db.execute(
+            "SELECT 1 FROM materials WHERE url=? AND campaign_url=?", (url, campaign_url)).fetchone() is not None
+
+    def mark_material(self, url: str, campaign_url: str, status: str, error: str | None = None) -> None:
+        self.db.execute("INSERT OR REPLACE INTO materials VALUES (?,?,?,?)", (url, campaign_url, status, error))
+        self.db.commit()
+
+    # clips
+    def add_clip(self, campaign_url: str, page: str, meta: dict) -> None:
+        self.db.execute(
+            "INSERT OR IGNORE INTO clips (campaign_url, page, path, meta, virality, created_at) VALUES (?,?,?,?,?,?)",
+            (campaign_url, page, meta["path"], json.dumps(meta, ensure_ascii=False), meta.get("virality_score", 0), now()),
+        )
+        self.db.commit()
+
+    def next_clip_to_post(self, page: str, platform: str, max_attempts: int = 3) -> sqlite3.Row | None:
+        """Best-scoring clip of this page not yet posted (or failed < max_attempts) on this platform."""
+        return self.db.execute(
+            """SELECT c.* FROM clips c
+               LEFT JOIN posts p ON p.clip_id=c.id AND p.platform=?
+               WHERE c.page=? AND (p.clip_id IS NULL OR (p.status='failed' AND p.attempts<?))
+               ORDER BY c.virality DESC, c.created_at ASC LIMIT 1""",
+            (platform, page, max_attempts),
+        ).fetchone()
+
+    # posts
+    def record_post(self, clip_id: int, platform: str, page: str, url: str | None, error: str | None) -> None:
+        status = "posted" if url else "failed"
+        self.db.execute(
+            """INSERT INTO posts (clip_id, platform, page, url, status, error, attempts, posted_at)
+               VALUES (?,?,?,?,?,?,1,?)
+               ON CONFLICT(clip_id, platform) DO UPDATE SET
+                 url=excluded.url, status=excluded.status, error=excluded.error,
+                 attempts=posts.attempts+1, posted_at=excluded.posted_at""",
+            (clip_id, platform, page, url, status, error, now()),
+        )
+        self.db.commit()
+
+    def posts_since(self, page: str, platform: str, hours: float) -> list[sqlite3.Row]:
+        since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="seconds")
+        return self.db.execute(
+            "SELECT * FROM posts WHERE page=? AND platform=? AND status='posted' AND posted_at>=? ORDER BY posted_at DESC",
+            (page, platform, since),
+        ).fetchall()
+
+    def posts_to_submit(self, min_age_minutes: int = 10, max_attempts: int = 3) -> list[sqlite3.Row]:
+        before = (datetime.now(timezone.utc) - timedelta(minutes=min_age_minutes)).isoformat(timespec="seconds")
+        return self.db.execute(
+            """SELECT p.*, c.campaign_url, c.meta FROM posts p JOIN clips c ON c.id=p.clip_id
+               WHERE p.status='posted' AND p.posted_at<=?
+                 AND (p.vyro_status IS NULL OR (p.vyro_status='failed' AND p.vyro_attempts<?))""",
+            (before, max_attempts),
+        ).fetchall()
+
+    def record_submission(self, clip_id: int, platform: str, ok: bool, error: str | None = None) -> None:
+        self.db.execute(
+            "UPDATE posts SET vyro_status=?, vyro_error=?, vyro_attempts=vyro_attempts+1 WHERE clip_id=? AND platform=?",
+            ("submitted" if ok else "failed", error, clip_id, platform),
+        )
+        self.db.commit()
+
+    def summary(self) -> dict:
+        q = lambda sql: self.db.execute(sql).fetchone()[0]
+        return {
+            "campaigns": q("SELECT COUNT(*) FROM campaigns WHERE page!=''"),
+            "clips": q("SELECT COUNT(*) FROM clips"),
+            "posted": q("SELECT COUNT(*) FROM posts WHERE status='posted'"),
+            "submitted": q("SELECT COUNT(*) FROM posts WHERE vyro_status='submitted'"),
+        }

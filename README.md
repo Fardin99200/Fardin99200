@@ -1,97 +1,153 @@
-# Vyro Clipping Automation
+# Vyro Clipping Bot (24x7, fully automatic)
 
-Ek command se poora clipping kaam:
+Ye bot apne aap, bina ruke:
 
-```
-Video link → Download → Transcript (Whisper) → Claude AI best moments chunega
-→ 9:16 vertical + animated captions → YouTube Shorts upload → Vyro ke liye links ki list
-```
+1. **Vyro pe naye campaigns dhundhta hai** (har 3 ghante), tumhare logged-in account se
+2. **Har campaign ko sahi niche page pe bhejta hai** (podcast / gaming / comedy / finance), baaki skip
+3. **Campaign join karta hai**, rules aur source material ke links padhta hai
+4. **Material download → transcript → Claude AI viral moments chunta hai → 9:16 + animated subtitles**
+5. **Page ke YouTube Shorts + Instagram Reels pe post karta hai** (rate limit ke saath, spam nahi)
+6. **Post ka link Vyro campaign pe submit karta hai**
 
-## 1. Ek baar ka setup (Windows / Mac / Linux)
+Sab kuch `bot.db` mein save hota hai, to PC restart ho jaye to bhi jahan ruka wahin se chalega.
 
-1. **Python 3.10+** install karo (https://python.org), install karte waqt "Add to PATH" tick karna.
-2. **FFmpeg** install karo:
-   - Windows: `winget install ffmpeg`
-   - Mac: `brew install ffmpeg`
-   - Linux: `sudo apt install ffmpeg`
-3. Is folder mein terminal kholo aur:
-   ```bash
+> Ek video manually clip karni ho to `run.py` bhi hai (neeche dekho).
+
+---
+
+## Zaroori baatein (pehle padh lo)
+
+- **Pages (accounts) tumhe khud banane honge.** Bot YouTube channels ya Instagram accounts nahi bana sakta
+  (phone verification aur CAPTCHA lagta hai, aur bot se account banana platforms ke rules ke khilaf hai).
+  Har niche ke liye ek YouTube channel + ek Instagram **Professional (Creator/Business)** account banao. Ye ek baar ka kaam hai.
+- **Vyro bot ban ka risk:** Vyro ka API nahi hai, isliye bot browser chala ke tumhare account se kaam karta hai.
+  Agar Vyro ke terms bots allow nahi karte to account ban ho sakta hai. Vyro ke Terms ek baar padh lena.
+- **Nayi pages pe dheere shuru karo.** Naye accounts pe din mein bahut posts karoge to reach kam ho sakti hai (shadowban).
+  Default 3 posts/din/platform aur 2 ghante gap hai, `bot.yaml` mein badal sakte ho.
+- **Bot ki safety:** bot sirf `vyro.com` pe jaata hai. Withdraw, payout, settings, logout, password jaise buttons click nahi karta.
+  Sirf post ke links aur tumhare handles type karta hai. Campaign page pe likhe instructions ko follow nahi karta.
+- **Kharcha:** Claude API ka kharcha usage pe hota hai (moments chunna + Vyro browser steps). Pehle hafte
+  https://platform.claude.com pe usage dekhte rehna, aur wahan monthly spend limit laga dena.
+
+---
+
+## 1. Install (ek baar, Windows)
+
+1. **Python 3.10+** (https://python.org). Install karte waqt "Add to PATH" tick karna.
+2. **FFmpeg**: PowerShell mein `winget install ffmpeg`
+3. Is folder mein terminal kholo:
+   ```bat
    python -m venv .venv
-   # Windows:  .venv\Scripts\activate
-   # Mac/Linux: source .venv/bin/activate
+   .venv\Scripts\activate
    pip install -r requirements.txt
+   playwright install chromium
    ```
-4. **Claude API key**: https://platform.claude.com pe account bana ke API key lo.
-   `.env.example` ko copy karke `.env` naam do aur key daalo.
-   (Ek ghante ki video pe roughly 5-15 cents ka kharcha aata hai.)
+4. `.env.example` ko copy karke `.env` banao, aur `ANTHROPIC_API_KEY` daalo (https://platform.claude.com).
+5. `bot.example.yaml` ko copy karke `bot.yaml` banao.
 
-## 2. Campaign file banao
+## 2. Vyro login (ek baar)
 
-`campaign.example.yaml` copy karke `campaign.yaml` banao. Vyro campaign page se:
-- source video links `sources:` mein daalo
-- campaign ke rules `rules:` mein paste karo (Claude unko follow karega)
-- clip length, language, hashtags set karo
-
-## 3. Chalao
-
-```bash
-# campaign file se (sab links process honge)
-python run.py --campaign campaign.yaml
-
-# ya seedha link se
-python run.py "https://www.youtube.com/watch?v=XXXX" --clips 3 --no-upload
-
-# local file
-python run.py my_podcast.mp4 --crop blur
+```bat
+python bot.py --login
 ```
+Browser khulega. Vyro pe login karo, phir terminal mein ENTER dabao. Login `browser_profile/` mein save ho jata hai.
+Login ke baad jis page pe campaigns ki list dikhti hai, uska URL `bot.yaml` mein `vyro.start_url` pe daal do.
 
-Clips `output/<video>/` mein milenge: `.mp4` (1080x1920) + `.json` (title, description, hashtags, timestamps).
-`output/submissions.csv` mein har clip ka YouTube link hota hai — wahi links Vyro pe submit karo.
+Agar kabhi login expire hua to `logs/bot.log` mein `LOGIN_REQUIRED` aayega. Tab bas `python bot.py --login` dobara chalao.
+Tab tak clipping aur posting chalti rahegi.
 
-Useful options:
-
-| Option | Kaam |
-|---|---|
-| `--clips 5` | har video se kitne clips |
-| `--min 20 --max 60` | clip length (seconds) |
-| `--crop face/center/blur` | `face` = chehra center mein, `blur` = poora frame + blurred background |
-| `--no-captions` | subtitles band |
-| `--upload` / `--no-upload` | YouTube upload on/off |
-| `--privacy public` | upload privacy |
-| `--whisper medium` | behtar transcript (GPU pe), slow PC pe `base` |
-
-Same command dobara chalao to jo videos ho chuke hain wo skip ho jaate hain, isliye isko
-**Task Scheduler (Windows) / cron (Mac/Linux)** pe roz chala sakte ho — campaign file mein naye links daalte jao.
-
-## 4. YouTube upload setup (ek baar)
+## 3. YouTube setup (ek baar)
 
 1. https://console.cloud.google.com → naya project banao.
 2. "APIs & Services → Library" → **YouTube Data API v3** enable karo.
-3. "OAuth consent screen" → External → apna Gmail "Test users" mein add karo.
-4. "Credentials → Create credentials → OAuth client ID → Desktop app" → JSON download karo,
-   naam `client_secret.json` rakh ke is folder mein daalo.
-5. Pehli baar upload pe browser khulega, apna YouTube channel select karo. Uske baad `token.json` ban jaati hai, dobara login nahi.
+3. "OAuth consent screen" → External → apna Gmail "Test users" mein add karo, phir **Publish app** karo
+   (warna token 7 din mein expire ho jata hai).
+4. "Credentials → Create credentials → OAuth client ID → Desktop app" → JSON download karke `client_secret.json` naam se is folder mein rakho.
+5. Chalao:
+   ```bat
+   python bot.py --setup-youtube
+   ```
+   Har page ke liye browser khulega. Har baar **us page ka channel** select karna.
 
-Dhyan rakho:
-- Google ka free quota roughly **6 uploads/din** deta hai (har upload ~1600 units, 10,000/din).
-- Naye (unverified) Google project se upload hui videos YouTube **private lock** kar sakta hai jab tak
-  project ka audit na ho. Agar aisa ho to YouTube Studio se manually public karo, ya Google ka
-  "API audit" form bharo.
-- Default `privacy: private` hai — pehle kuch clips dekh ke quality check karo, phir `public` karo.
+**Quota:** Google free mein ek project ko 10,000 units/din deta hai, aur ek upload ~1600 units ka hota hai, matlab
+**~6 uploads/din saare pages mila ke**. 4 pages × 3 posts ke liye Google Console mein
+"YouTube API quota extension" form bhar ke quota badhwa lo (free hai). Tab tak `max_per_day` kam rakho.
+Naye project se upload hui videos YouTube private lock kar sakta hai jab tak API audit na ho. Wo form bhi wahi hai.
 
-## Vyro ke baare mein
+## 4. Instagram setup (har page ke liye)
 
-- Vyro ka koi public API nahi hai, isliye **submission manual** hai: `submissions.csv` se link copy karke Vyro dashboard pe submit karo.
-- Sirf Vyro campaign mein diye gaye source videos clip karo, aur campaign ke rules follow karo, warna clips reject ho sakte hain.
-- TikTok/Instagram upload abhi nahi hai — wahan `.mp4` files manually upload kar sakte ho.
+1. Instagram account ko **Professional (Creator ya Business)** banao, aur ek **Facebook Page** se link karo.
+2. https://developers.facebook.com → My Apps → Create App (type: Business). Usme **Instagram Graph API** add karo.
+3. **Graph API Explorer** mein permissions lo: `instagram_basic`, `instagram_content_publish`,
+   `pages_show_list`, `pages_read_engagement`, `business_management`.
+4. User token ko **long-lived** banao (Access Token Debugger → "Extend"), phir `me/accounts` call karke
+   us Facebook Page ka **Page access token** lo. Long-lived user token se nikla Page token expire nahi hota.
+5. `<page-id>?fields=instagram_business_account` se **Instagram user ID** nikalo.
+6. `bot.yaml` mein `user_id` daalo, aur token `.env` mein (jaise `IG_TOKEN_PODCAST=...`).
+
+Instagram ka limit 50 posts/24 ghante/account hai, isliye bot ke default 3/din safe hain.
+
+## 5. Chalao, 24x7
+
+Test ke liye ek cycle:
+```bat
+python bot.py --once
+```
+Hamesha ke liye: **`start_bot.bat` double-click karo.** Bot crash ho jaye to 60 second mein apne aap restart ho jata hai.
+
+PC on hote hi apne aap chalu ho, uske liye:
+1. Windows search mein **Task Scheduler** kholo → "Create Basic Task"
+2. Trigger: **When I log on**
+3. Action: Start a program → `start_bot.bat` (Start in: is folder ka path)
+
+**PC ko sone mat do:** Settings → System → Power → "Sleep: Never" (screen band ho sakti hai, PC nahi).
+Internet aur PC on rehna zaroori hai.
+
+## Kya ho raha hai, kaise dekhein
+
+- `logs/bot.log`: har kaam ka log (campaigns, clips, posts, submit)
+- `output/<page>/...`: saare clips (`.mp4` + `.json`)
+- `bot.db`: state. Isko [DB Browser for SQLite](https://sqlitebrowser.org) se khol ke tables dekh sakte ho:
+  `campaigns`, `clips`, `posts` (post URL + `vyro_status`)
+
+## bot.yaml settings
+
+| Setting | Kaam |
+|---|---|
+| `vyro.start_url` | Vyro ka campaigns page |
+| `vyro.scan_every_hours` | naye campaigns kitni baar dekhne hain |
+| `vyro.min_cpm_usd` | is se kam paise wale campaigns skip |
+| `vyro.max_materials_per_campaign` | ek campaign ki kitni videos clip karni hain |
+| `vyro.headless` | `true` = browser window chhupi |
+| `pages[].niche` | page kis type ke campaigns lega (AI isse match karta hai) |
+| `pages[].clips_per_video` | har source video se kitne clips |
+| `pages[].min_gap_minutes` | do posts ke beech ka gap |
+| `pages[].youtube.max_per_day` / `instagram.max_per_day` | roz ke posts ki limit |
+| `clip_defaults` | `crop_mode` (face/center/blur), `captions`, `whisper_model`, `min_seconds`, `max_seconds` |
+
+Kisi page pe YouTube ya Instagram nahi chahiye to us block mein `enabled: false` likh do.
+
+---
+
+## Ek video manually (run.py)
+
+```bat
+python run.py "https://www.youtube.com/watch?v=XXXX" --clips 3 --no-upload
+python run.py my_video.mp4 --crop blur
+python run.py --campaign campaign.yaml
+```
+Options: `--clips`, `--min`, `--max`, `--crop face|center|blur`, `--no-captions`, `--upload`, `--privacy`, `--whisper`.
 
 ## Files
 
 | File | Kaam |
 |---|---|
-| `run.py` | main command |
-| `clipper/download.py` | yt-dlp se download |
-| `clipper/transcribe.py` | faster-whisper transcript (word timestamps) |
-| `clipper/selector.py` | Claude se best moments + titles/hashtags |
-| `clipper/render.py` | 9:16 crop/blur, face tracking, animated captions |
-| `clipper/uploader.py` | YouTube Shorts upload |
+| `bot.py` | 24x7 bot (scan → clip → post → submit) |
+| `run.py` | ek video ke clips manually |
+| `clipper/vyro.py` | Vyro ke kaam: campaigns scan, join + material, submit |
+| `clipper/browser_agent.py` | Claude se chalne wala browser, safety rules ke saath |
+| `clipper/pipeline.py` | download → transcript → AI selection → render |
+| `clipper/selector.py` | Claude se viral moments + title/hashtags |
+| `clipper/render.py` | 9:16 face-crop/blur, animated subtitles |
+| `clipper/uploader.py` / `clipper/instagram.py` | YouTube Shorts / Instagram Reels posting |
+| `clipper/state.py` | SQLite memory (kuch bhi do baar nahi hota) |

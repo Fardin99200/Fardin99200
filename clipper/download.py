@@ -31,6 +31,11 @@ def fetch(source: str, download_dir: str | Path) -> tuple[Path, str]:
         title = (out / "title.txt").read_text(encoding="utf-8") if (out / "title.txt").exists() else ""
         return existing[0].resolve(), title
 
+    if "dropbox.com" in source:
+        source = source.replace("dl=0", "dl=1") if "dl=0" in source else source + ("&" if "?" in source else "?") + "dl=1"
+    if "drive.google.com" in source:
+        return _fetch_drive(source, out)
+
     opts = {
         "format": "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b",
         "merge_output_format": "mp4",
@@ -47,3 +52,26 @@ def fetch(source: str, download_dir: str | Path) -> tuple[Path, str]:
     title = info.get("title") or ""
     (out / "title.txt").write_text(title, encoding="utf-8")
     return file.resolve(), title
+
+
+def _fetch_drive(url: str, out: Path) -> tuple[Path, str]:
+    """Google Drive file or folder link (yt-dlp is unreliable for Drive)."""
+    import gdown
+
+    if "/folders/" in url:
+        files = gdown.download_folder(url, output=str(out), quiet=True) or []
+        videos = [Path(f) for f in files if Path(f).suffix.lower() in {".mp4", ".mov", ".mkv", ".webm"}]
+        if not videos:
+            raise RuntimeError("Drive folder mein koi video nahi mili")
+        # Campaign folders usually hold one main long video; use the largest file.
+        video = max(videos, key=lambda p: p.stat().st_size)
+    else:
+        file = gdown.download(url, output=str(out) + "/", quiet=True, fuzzy=True)
+        if not file:
+            raise RuntimeError("Drive file download failed (link 'Anyone with the link' pe set hai?)")
+        video = Path(file)
+    final = out / f"video{video.suffix.lower()}"
+    if video != final:
+        video.rename(final)
+    (out / "title.txt").write_text(video.stem, encoding="utf-8")
+    return final.resolve(), video.stem

@@ -10,19 +10,14 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import re
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from clipper import download, render, selector, transcribe
+from clipper import download, pipeline
 from clipper.config import Campaign
-
-
-def slug(text: str, n: int = 40) -> str:
-    return re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")[:n] or "clip"
 
 
 def log_submission(out_dir: Path, row: dict) -> None:
@@ -37,74 +32,33 @@ def log_submission(out_dir: Path, row: dict) -> None:
 
 def process_source(source: str, c: Campaign, out_root: Path) -> None:
     print(f"\n=== {source}")
-    sid = download.source_id(source)
-    out_dir = out_root / sid
+    out_dir = out_root / download.source_id(source)
     done_marker = out_dir / "done.json"
     if done_marker.exists():
         print("  Already processed, skipping (delete the folder to redo).")
         return
 
-    print("[1/4] Downloading...")
-    video, title = download.fetch(source, c.download_dir)
-    _, _, duration = render.probe(video)
-    print(f"  {title or video.name} ({duration/60:.1f} min)")
-
-    print("[2/4] Transcribing...")
-    segments = transcribe.transcribe(video, out_dir / "transcript.json", c.whisper_model, c.whisper_language)
-    if not segments:
-        print("  No speech found, skipping.")
-        return
-
-    print("[3/4] Claude is picking the best moments...")
-    plan_file = out_dir / "plan.json"
-    if plan_file.exists():
-        ideas = [selector.ClipIdea(**d) for d in json.loads(plan_file.read_text(encoding="utf-8"))]
-    else:
-        ideas = selector.pick_clips(segments, title, c)
-        plan_file.write_text(json.dumps([i.model_dump() for i in ideas], ensure_ascii=False, indent=2), encoding="utf-8")
-
-    windows = []
-    for idea in ideas:
-        snapped = selector.snap_to_speech(idea, segments, c, duration)
-        if snapped:
-            windows.append((*snapped, idea))
-    windows = selector.remove_overlaps(windows)[: c.clips_per_video]
-    print(f"  {len(windows)} clips selected")
-
-    print("[4/4] Rendering" + (" + uploading" if c.upload else "") + "...")
-    for n, (start, end, idea) in enumerate(windows, 1):
-        out_file = out_dir / f"{n:02d}_{slug(idea.title)}.mp4"
-        print(f"  #{n} [{start:.1f}-{end:.1f}s, score {idea.virality_score}] {idea.title}")
-        if not out_file.exists():
-            render.render_clip(video, start, end, segments, out_file, c)
-
-        hashtags = list(dict.fromkeys(idea.hashtags + c.required_hashtags))
-        description = "\n\n".join(x for x in [idea.description, " ".join(hashtags), c.description_suffix] if x)
-        meta = {**idea.model_dump(), "start": start, "end": end, "file": out_file.name,
-                "final_description": description, "youtube_url": ""}
-
-        meta_file = out_file.with_suffix(".json")
-        if meta_file.exists():
-            meta["youtube_url"] = json.loads(meta_file.read_text(encoding="utf-8")).get("youtube_url", "")
-
-        if c.upload and not meta["youtube_url"]:
+    for meta in pipeline.make_clips(source, c, out_root):
+        meta_file = Path(meta["path"]).with_suffix(".json")
+        if c.upload:
             from clipper import uploader
             try:
-                meta["youtube_url"] = uploader.upload_short(out_file, idea.title, description, hashtags, c.privacy)
+                meta["youtube_url"] = uploader.upload_short(
+                    Path(meta["path"]), meta["title"], meta["final_description"], meta["hashtags"], c.privacy)
                 print(f"    -> {meta['youtube_url']}")
             except Exception as e:  # keep going; the clip is still saved locally
                 print(f"    Upload failed: {e}")
-
         meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         log_submission(out_root, {
             "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "campaign": c.campaign_name,
             "source": source,
-            "clip_file": str(out_file),
-            "title": idea.title,
-            "youtube_url": meta["youtube_url"],
+            "clip_file": meta["path"],
+            "title": meta["title"],
+            "youtube_url": meta.get("youtube_url", ""),
         })
 
+    out_dir.mkdir(parents=True, exist_ok=True)
     done_marker.write_text(json.dumps({"finished": datetime.now().isoformat()}), encoding="utf-8")
     print(f"  Clips saved in: {out_dir}")
 
