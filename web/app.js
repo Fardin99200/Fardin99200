@@ -688,6 +688,14 @@ async function renderSettings() {
             <label class="field"><span>Subtitle highlight color</span><input type="text" name="caption_highlight_color" value="${esc(c.caption_highlight_color)}" placeholder="FFFF00"></label>
           </div>
           <label class="check"><input type="checkbox" name="captions" ${c.captions ? "checked" : ""}> Subtitles lagao</label>
+          <label class="check"><input type="checkbox" name="hook_text" ${c.hook_text ? "checked" : ""}> Upar hook title (clip ka title bold box mein)</label>
+          <label class="check"><input type="checkbox" name="progress_bar" ${c.progress_bar ? "checked" : ""}> Neeche progress bar</label>
+          <label class="check"><input type="checkbox" name="zoom" ${c.zoom ? "checked" : ""}> Slow zoom-in (video chalti hui lagti hai)</label>
+          <div class="form-grid">
+            <label class="field"><span>Hook title kitni der (sec, 0 = poori clip)</span><input type="number" min="0" step="0.5" name="hook_seconds" value="${c.hook_seconds}"></label>
+            <label class="field"><span>Music volume (0 = band)</span><input type="number" min="0" max="1" step="0.01" name="music_volume" value="${c.music_volume}"></label>
+          </div>
+          <div class="hint">Music: Rare Cash folder ke andar <code>music</code> folder mein copyright-free .mp3 daalo (abhi ${s.music_tracks} gaane). Khali = no music.</div>
           <label class="check"><input type="checkbox" name="caption_uppercase" ${c.caption_uppercase ? "checked" : ""}> Subtitles CAPITAL letters mein</label>
         </div>
       </div>
@@ -790,7 +798,7 @@ async function renderSettings() {
       remote: { lan_enabled: f.lan_enabled.checked, port: +fd.remote_port || 8000 },
       pin: fd.pin || null,
       loop_minutes: +fd.loop_minutes,
-      clip: { crop_mode: fd.crop_mode, whisper_model: fd.whisper_model, min_seconds: +fd.min_seconds, max_seconds: +fd.max_seconds, caption_highlight_color: (fd.caption_highlight_color || "FFFF00").replace("#", "").toUpperCase(), captions: f.captions.checked, caption_uppercase: f.caption_uppercase.checked },
+      clip: { crop_mode: fd.crop_mode, whisper_model: fd.whisper_model, min_seconds: +fd.min_seconds, max_seconds: +fd.max_seconds, caption_highlight_color: (fd.caption_highlight_color || "FFFF00").replace("#", "").toUpperCase(), captions: f.captions.checked, caption_uppercase: f.caption_uppercase.checked, hook_text: f.hook_text.checked, progress_bar: f.progress_bar.checked, zoom: f.zoom.checked, hook_seconds: +fd.hook_seconds || 0, music_volume: +fd.music_volume || 0 },
       api_key: fd.api_key || null,
     } }), "Settings save ho gayi");
     renderSettings();

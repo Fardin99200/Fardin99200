@@ -63,7 +63,7 @@ def make_clips(source: str, c: Campaign, out_root: Path) -> list[dict]:
         out_file = out_dir / f"{n:02d}_{slug(idea.title)}.mp4"
         print(f"  #{n} [{start:.1f}-{end:.1f}s, score {idea.virality_score}] {idea.title}")
         if not out_file.exists():
-            render.render_clip(video, start, end, segments, out_file, c)
+            render.render_clip(video, start, end, segments, out_file, c, hook=idea.title)
 
         hashtags = list(dict.fromkeys(idea.hashtags + c.required_hashtags))
         description = "\n\n".join(x for x in [idea.description, " ".join(hashtags), c.description_suffix] if x)

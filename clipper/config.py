@@ -30,6 +30,14 @@ class Campaign:
     caption_highlight_color: str = "FFFF00"  # RRGGBB for the word being spoken
     caption_uppercase: bool = True
 
+    # Extra effects
+    hook_text: bool = True        # the clip's title as a bold box at the top
+    hook_seconds: float = 0       # 0 = whole clip, else only the first N seconds
+    progress_bar: bool = True     # thin bar at the bottom that fills up
+    zoom: bool = True             # slow push-in (keeps the frame moving)
+    music_dir: str = "music"      # put royalty-free .mp3 files here; empty folder = no music
+    music_volume: float = 0.12    # 0.05 quiet ... 0.3 loud
+
     # Transcription (faster-whisper model: tiny, base, small, medium, large-v3)
     whisper_model: str = "small"
     whisper_language: str | None = None  # None = auto-detect

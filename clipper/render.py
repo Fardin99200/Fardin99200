@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import random
 import subprocess
 from pathlib import Path
 from statistics import median
@@ -61,7 +62,7 @@ def _ass_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("{", "(").replace("}", ")")
 
 
-def build_ass(segments: list[dict], start: float, end: float, c: Campaign) -> str:
+def build_ass(segments: list[dict], start: float, end: float, c: Campaign, hook: str = "") -> str:
     """Word-by-word captions: a few words on screen, the spoken word highlighted."""
     words = [w for s in segments for w in s["words"] if w["end"] > start and w["start"] < end]
     rr, gg, bb = c.caption_highlight_color[0:2], c.caption_highlight_color[2:4], c.caption_highlight_color[4:6]
@@ -77,6 +78,7 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Cap,{c.caption_font},{c.caption_font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,3,2,60,60,520,1
+Style: Hook,{c.caption_font},62,&H00111111,&H00111111,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,14,0,8,90,90,230,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -104,11 +106,33 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             lines.append(
                 f"Dialogue: 0,{_ass_time(ws - start)},{_ass_time(max(we, ws + 0.05) - start)},Cap,,0,0,0,,{' '.join(parts)}"
             )
+    if hook:
+        hook_end = (end - start) if c.hook_seconds <= 0 else min(c.hook_seconds, end - start)
+        lines.append(f"Dialogue: 1,{_ass_time(0)},{_ass_time(hook_end)},Hook,,0,0,0,,{_ass_escape(hook)}")
     return header + "\n".join(lines) + "\n"
 
 
-def render_clip(video: Path, start: float, end: float, segments: list[dict], out_file: Path, c: Campaign) -> Path:
+def has_audio(video: Path) -> bool:
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
+                          "-of", "csv=p=0", str(video)], capture_output=True, text=True).stdout
+    return bool(out.strip())
+
+
+def pick_music(c: Campaign) -> Path | None:
+    if c.music_volume <= 0:
+        return None
+    folder = Path(c.music_dir) if c.music_dir else None
+    if not folder or not folder.is_dir():
+        return None
+    tracks = [p for p in folder.iterdir() if p.suffix.lower() in {".mp3", ".m4a", ".wav", ".aac", ".ogg"}]
+    return random.choice(tracks).resolve() if tracks else None
+
+
+def render_clip(video: Path, start: float, end: float, segments: list[dict], out_file: Path, c: Campaign,
+                hook: str = "") -> Path:
+    video = Path(video).resolve()  # ffmpeg runs inside the output folder
     src_w, src_h, _ = probe(video)
+    dur = max(0.5, end - start)
     out_file.parent.mkdir(parents=True, exist_ok=True)
     work = out_file.parent
 
@@ -132,18 +156,40 @@ def render_clip(video: Path, start: float, end: float, segments: list[dict], out
             x, y = 0, (src_h - ch) // 2
         graph = f"[0:v]crop={cw}:{ch}:{x}:{y},scale={OUT_W}:{OUT_H},setsar=1[v]"
 
-    out_label = "[v]"
-    if c.captions:
+    label = "v"
+    if c.zoom:  # slow 6% push-in over the clip
+        graph += (f";[{label}]scale=w='{OUT_W}*(1+0.06*t/{dur:.2f})':h=-2:eval=frame,"
+                  f"crop={OUT_W}:{OUT_H},setsar=1[vz]")
+        label = "vz"
+    hook = hook if c.hook_text else ""
+    if c.captions or hook:
         ass_file = work / f"{out_file.stem}.ass"
-        ass_file.write_text(build_ass(segments, start, end, c), encoding="utf-8")
+        ass_segments = segments if c.captions else []
+        ass_file.write_text(build_ass(ass_segments, start, end, c, hook), encoding="utf-8")
         # relative filename + cwd avoids ffmpeg filter path-escaping issues (Windows drive colons)
-        graph += f";[v]ass={ass_file.name}[vout]"
-        out_label = "[vout]"
+        graph += f";[{label}]ass={ass_file.name}[vc]"
+        label = "vc"
+    if c.progress_bar:
+        graph += (f";color=c=white@0.85:s={OUT_W}x10:r=30,format=rgba[bar]"
+                  f";[{label}][bar]overlay=x='-W+W*t/{dur:.2f}':y=H-10:shortest=1[vp]")
+        label = "vp"
+
+    inputs = ["-ss", f"{start:.2f}", "-t", f"{dur:.2f}", "-i", str(video)]
+    audio_map = ["-map", "0:a?"]
+    music = pick_music(c)
+    if music:
+        inputs += ["-stream_loop", "-1", "-i", str(music)]
+        fade = f"afade=t=out:st={max(0.0, dur - 1.2):.2f}:d=1.2"
+        if has_audio(video):
+            graph += (f";[1:a]volume={c.music_volume:.3f},{fade}[mus]"
+                      f";[0:a][mus]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]")
+        else:
+            graph += f";[1:a]volume={max(c.music_volume, 0.4):.3f},{fade}[aout]"
+        audio_map = ["-map", "[aout]"]
 
     cmd = [
-        "ffmpeg", "-y", "-loglevel", "error", "-stats",
-        "-ss", f"{start:.2f}", "-t", f"{end - start:.2f}", "-i", str(video),
-        "-filter_complex", graph, "-map", out_label, "-map", "0:a?",
+        "ffmpeg", "-y", "-loglevel", "error", "-stats", *inputs,
+        "-filter_complex", graph, "-map", f"[{label}]", *audio_map, "-t", f"{dur:.2f}",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
         out_file.name,

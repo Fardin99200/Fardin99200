@@ -40,6 +40,12 @@ if getattr(sys, "frozen", False):
 else:
     APP_DIR = RES_DIR = Path(__file__).parent.resolve()
 os.chdir(APP_DIR)
+(APP_DIR / "music").mkdir(exist_ok=True)
+if not (APP_DIR / "music" / "README.txt").exists():
+    (APP_DIR / "music" / "README.txt").write_text(
+        "Is folder mein royalty-free / copyright-free .mp3 gaane daalo.\n"
+        "Rare Cash har clip ke peeche ek random gaana halki awaaz mein lagayega.\n"
+        "Folder khali = koi music nahi. Copyright wale gaane mat daalna, video block ho sakti hai.\n", encoding="utf-8")
 for example, target in (("bot.example.yaml", "bot.example.yaml"), (".env.example", ".env")):
     if not (APP_DIR / target).exists() and (RES_DIR / example).exists():
         shutil.copyfile(RES_DIR / example, APP_DIR / target)
@@ -827,7 +833,7 @@ def logs(lines: int = 300):
 
 
 CLIP_KEYS = ["crop_mode", "captions", "caption_uppercase", "caption_highlight_color", "whisper_model",
-             "min_seconds", "max_seconds"]
+             "min_seconds", "max_seconds", "hook_text", "hook_seconds", "progress_bar", "zoom", "music_volume"]
 
 
 @app.get("/api/settings")
@@ -844,6 +850,7 @@ def settings_get():
                      "pending_chat": db().get("telegram_pending_chat", "")},
         "loop_minutes": c.loop_minutes,
         "clip": {k: c.clip_defaults.get(k, getattr(d, k)) for k in CLIP_KEYS},
+        "music_tracks": len([x for x in (APP_DIR / "music").glob("*") if x.suffix.lower() in {".mp3", ".m4a", ".wav", ".aac", ".ogg"}]),
         "api_key_set": bool(os.getenv("ANTHROPIC_API_KEY")),
         "client_secret_found": Path("client_secret.json").exists(),
         "vyro_logged_in": bool(db().get("login_ok_at")) and db().get("login_required") != "1",
