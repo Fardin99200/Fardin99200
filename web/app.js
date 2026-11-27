@@ -55,12 +55,18 @@ const clock = (t) => new Date(t * 1000).toLocaleString([], { hour: "2-digit", mi
 function chip(level, icon, text, title = "") {
   return `<span class="chip ${level}" ${title ? `title="${esc(title)}"` : ""}>${icon} ${esc(text)}</span>`;
 }
+const PLATFORM = {
+  youtube: { short: "YT", long: "YouTube Shorts", name: "YouTube" },
+  instagram: { short: "IG", long: "Instagram Reels", name: "Instagram" },
+  tiktok: { short: "TT", long: "TikTok", name: "TikTok" },
+};
+const pf = (k, f = "name") => (PLATFORM[k] || { [f]: k })[f];
 const CAMP_STATUS = {
   ready: ["info", "●", "Clips banenge"], pending: ["warning", "◌", "Bot padhega"], done: ["good", "✓", "Done"],
   skipped: ["", "–", "Skipped"], failed: ["critical", "✕", "Failed"],
 };
 function postChip(platform, p) {
-  const name = platform === "youtube" ? "YT" : "IG";
+  const name = pf(platform, "short");
   if (!p) return chip("", "◌", `${name}: queue`);
   if (p.status === "posted") {
     const v = chip("good", "✓", `${name}: ${fmt(p.views)} views`);
@@ -358,11 +364,16 @@ async function renderPages() {
     const igLine = ig ? `<div class="platform-line"><span class="name">Instagram</span>
         ${!ig.enabled ? chip("", "–", "off") : p.instagram_token_set ? chip("good", "✓", "token set") : chip("critical", "✕", "token missing")}
         <span class="spacer"></span><small style="white-space:nowrap">aaj ${p.instagram_today || "-"}</small></div>` : "";
+    const tt = p.tiktok;
+    const ttLine = tt ? `<div class="platform-line"><span class="name">TikTok</span>
+        ${!tt.enabled ? chip("", "–", "off") : p.tiktok_connected ? chip("good", "✓", tt.privacy === "SELF_ONLY" ? "connected · private" : "connected") : chip("critical", "✕", "not connected")}
+        <span class="spacer"></span><small style="white-space:nowrap">aaj ${p.tiktok_today || "-"}</small>
+        ${tt.enabled && !p.tiktok_connected ? `<button class="small" onclick="ttConnect('${esc(p.name)}')">Connect</button>` : ""}</div>` : "";
     return `<div class="card page-card ${p.enabled ? "" : "disabled"}">
       <div class="row between"><h3>${esc(p.name)}</h3>
         <label class="mini-switch" title="Page ON/OFF"><input type="checkbox" ${p.enabled ? "checked" : ""} onchange="togglePage('${esc(p.name)}', this.checked)"><span></span></label></div>
       <div class="niche">${esc(p.niche)}</div>
-      ${ytLine}${igLine}
+      ${ytLine}${igLine}${ttLine}
       <div class="platform-line"><span class="name">Stats</span><small>${fmt(p.clips)} clips · ${fmt(p.views)} views · ${p.min_gap_minutes} min gap</small></div>
       <div class="row" style="margin-top:10px"><button class="small" onclick="editPage('${esc(p.name)}')">✎ Edit</button>
         <button class="small danger" onclick="deletePage('${esc(p.name)}')">Delete</button></div></div>`;
@@ -378,6 +389,14 @@ async function deletePage(name) {
   if (!confirm(`Page "${name}" delete karna hai? (clips aur posts delete nahi honge)`)) return;
   await act(() => api(`/api/pages/${encodeURIComponent(name)}`, { method: "DELETE" }), "Page delete ho gaya"); renderPages();
 }
+async function ttConnect(name) {
+  try {
+    const { url } = await api(`/api/tiktok/auth-url?page=${encodeURIComponent(name)}`);
+    window.open(url, "_blank");
+    toast("TikTok login naye tab mein khula. Login karke wapas aao.");
+    setTimeout(renderPages, 20000);
+  } catch (e) { toast(e.message, true); if (/client key/i.test(e.message)) location.hash = "settings"; }
+}
 async function ytConnect(name) { await act(() => api(`/api/pages/${encodeURIComponent(name)}/youtube-connect`, { method: "POST" })); setTimeout(renderPages, 3000); }
 
 const NICHES = {
@@ -390,6 +409,7 @@ function editPage(name) {
   const p = STATE.pages.find((x) => x.name === name) || { name: "", niche: "", language: "English", clips_per_video: 4, min_gap_minutes: 120, handles: [], enabled: true, youtube: { enabled: true, privacy: "public", max_per_day: 3, client_secret: "client_secret.json", token_file: "" }, instagram: { enabled: true, user_id: "", token_env: "", max_per_day: 3, graph_version: "v23.0" } };
   const yt = p.youtube || { enabled: false, privacy: "public", max_per_day: 3, client_secret: "client_secret.json", token_file: "" };
   const ig = p.instagram || { enabled: false, user_id: "", token_env: "", max_per_day: 3, graph_version: "v23.0" };
+  const tt = p.tiktok || { enabled: false, username: "", privacy: "SELF_ONLY", max_per_day: 3, token_file: "" };
   openModal(`
     <h2>${name ? "Page edit karo" : "Naya page"}</h2>
     <form id="pageForm">
@@ -421,6 +441,15 @@ function editPage(name) {
         </div>
         <label class="field"><span>Access token ${p.instagram_token_set ? "(set hai, badalna ho to hi daalo)" : ""}</span><input type="password" name="ig_token" autocomplete="off" placeholder="EAAG..."><div class="hint">Token sirf tumhare PC ki .env file mein save hota hai.</div></label>
       </fieldset>
+      <fieldset><legend>TikTok</legend>
+        <label class="check"><input type="checkbox" name="tt_enabled" ${p.tiktok && tt.enabled ? "checked" : ""}> Is page pe TikTok post karo</label>
+        <div class="form-grid">
+          <label class="field"><span>TikTok username</span><input type="text" name="tt_user" value="${esc(tt.username)}" placeholder="@mypage"></label>
+          <label class="field"><span>Roz max posts</span><input type="number" name="tt_max" min="0" value="${tt.max_per_day}"></label>
+        </div>
+        <label class="field"><span>Privacy</span><select name="tt_privacy">${[["SELF_ONLY", "Private (app audit se pehle sirf yahi chalta hai)"], ["PUBLIC_TO_EVERYONE", "Public (audit ke baad)"], ["MUTUAL_FOLLOW_FRIENDS", "Friends"], ["FOLLOWER_OF_CREATOR", "Followers"]].map(([v, l]) => `<option value="${v}" ${tt.privacy === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+          <div class="hint">Private posts Vyro pe submit nahi hote (unke views nahi aate).</div></label>
+      </fieldset>
       <div class="row"><button class="primary" type="submit">Save</button><button type="button" onclick="closeModal()">Cancel</button></div>
     </form>`);
   $("#pageForm").addEventListener("submit", async (e) => {
@@ -431,6 +460,7 @@ function editPage(name) {
       clips_per_video: +f.clips_per_video, min_gap_minutes: +f.min_gap_minutes,
       handles: f.handles.split(",").map((s) => s.trim()).filter(Boolean),
       youtube: f.yt_enabled || p.youtube ? { enabled: !!f.yt_enabled, privacy: f.yt_privacy, max_per_day: +f.yt_max, client_secret: f.yt_secret || "client_secret.json", token_file: yt.token_file || "" } : null,
+      tiktok: f.tt_enabled || p.tiktok ? { enabled: !!f.tt_enabled, username: (f.tt_user || "").trim(), privacy: f.tt_privacy, max_per_day: +f.tt_max, token_file: tt.token_file || "" } : null,
       instagram: f.ig_enabled || p.instagram ? { enabled: !!f.ig_enabled, user_id: f.ig_user || "", token_env: ig.token_env || "", max_per_day: +f.ig_max, graph_version: ig.graph_version || "v23.0" } : null,
     };
     if (page.instagram && page.instagram.enabled && !page.instagram.user_id) return toast("Instagram user ID daalo (ya Instagram off karo)", true);
@@ -535,7 +565,7 @@ async function renderClips() {
         <div class="body">
           <div class="title">${esc(c.title)}</div>
           <small>${esc(c.page)} · ${c.duration}s · ${ago(c.created)}</small>
-          <div class="chips">${postChip("youtube", c.posts.youtube)}${postChip("instagram", c.posts.instagram)}${vyroChip(c.posts)}${c.status === "skipped" ? chip("", "–", "skipped") : ""}</div>
+          <div class="chips">${postChip("youtube", c.posts.youtube)}${postChip("instagram", c.posts.instagram)}${c.posts.tiktok ? postChip("tiktok", c.posts.tiktok) : ""}${vyroChip(c.posts)}${c.status === "skipped" ? chip("", "–", "skipped") : ""}</div>
           <div class="row" style="margin-top:auto">
             <button class="small" onclick="clipPriority(${c.id})" title="Queue mein sabse aage">⇡ Pehle post</button>
             <button class="small" onclick="clipSkip(${c.id}, ${c.status !== "skipped"})">${c.status === "skipped" ? "Wapas lao" : "Skip"}</button>
@@ -559,7 +589,7 @@ async function renderSchedule() {
   const slot = (x) => `<div class="slot">
       <div class="when">${!x.queue_len ? "–" : !s.enabled ? "Bot OFF" : until(x.next_at)}<small>${x.queue_len ? clock(Math.max(x.next_at, Date.now() / 1000)) : "queue khali"}</small></div>
       <div style="flex:1;min-width:0">
-        <div><b>${esc(x.page)}</b> · ${x.platform === "youtube" ? "YouTube Shorts" : "Instagram Reels"}</div>
+        <div><b>${esc(x.page)}</b> · ${pf(x.platform, "long")}</div>
         <small class="ellipsis" style="display:block">${x.next.length ? "Agla: " + esc(x.next[0].title) : "Koi clip queue mein nahi"}</small>
       </div>
       <div style="text-align:right"><div class="progress"><div style="width:${Math.min(100, (x.today / Math.max(1, x.limit)) * 100)}%"></div></div><small>aaj ${x.today}/${x.limit} · queue ${x.queue_len}</small></div>
@@ -572,7 +602,7 @@ async function renderSchedule() {
     </div>
     <div class="grid two">
       <div class="card"><h2>Aane wale posts</h2>${s.slots.length ? s.slots.map(slot).join("") : `<div class="empty"><b>Koi active page nahi</b><a href="#pages">Page add karo →</a></div>`}</div>
-      <div class="card"><h2>Haal ke posts</h2>${s.recent.length ? `<ul class="activity">${s.recent.map((r) => `<li><time>${clock(r.at)}</time><span><b>${esc(r.page)}</b> ${r.platform === "youtube" ? "YT" : "IG"} · <a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a> ${r.vyro === "submitted" ? chip("good", "✓", "Vyro") : ""}</span></li>`).join("")}</ul>` : `<div class="empty">Abhi tak koi post nahi</div>`}</div>
+      <div class="card"><h2>Haal ke posts</h2>${s.recent.length ? `<ul class="activity">${s.recent.map((r) => `<li><time>${clock(r.at)}</time><span><b>${esc(r.page)}</b> ${pf(r.platform, "short")} · <a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a> ${r.vyro === "submitted" ? chip("good", "✓", "Vyro") : ""}</span></li>`).join("")}</ul>` : `<div class="empty">Abhi tak koi post nahi</div>`}</div>
     </div>`;
 }
 
@@ -597,7 +627,7 @@ async function renderEarnings() {
     </div>
     <div class="card table-wrap" style="margin-top:16px"><h2>Top posts</h2>${e.top.length ? `<table>
       <thead><tr><th>Clip</th><th>Page</th><th>Platform</th><th class="num">Views</th><th class="num">Likes</th><th class="num">CPM</th><th class="num">Est. $</th><th class="num">Vyro $</th><th>Vyro</th></tr></thead>
-      <tbody>${e.top.map((r) => `<tr><td><div class="ellipsis"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a></div></td><td>${esc(r.page)}</td><td>${r.platform === "youtube" ? "YouTube" : "Instagram"}</td>
+      <tbody>${e.top.map((r) => `<tr><td><div class="ellipsis"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a></div></td><td>${esc(r.page)}</td><td>${pf(r.platform)}</td>
         <td class="num">${fmt(r.views)}</td><td class="num">${fmt(r.likes)}</td><td class="num">${r.cpm ? "$" + r.cpm : "–"}</td><td class="num">${money(r.earned)}</td><td class="num">${r.vyro_earned == null ? "–" : money(r.vyro_earned)}</td>
         <td>${r.vyro_state ? chip(/reject/i.test(r.vyro_state) ? "critical" : /approv|paid/i.test(r.vyro_state) ? "good" : "warning", "•", r.vyro_state) : r.vyro === "submitted" ? chip("good", "✓", "submitted") : r.vyro === "not_needed" ? chip("", "–", "manual") : r.vyro === "failed" ? chip("serious", "!", "retry") : chip("warning", "◌", "pending")}</td></tr>`).join("")}</tbody></table>`
       : `<div class="empty">Posts hone ke baad yahan dikhega</div>`}</div>`;
@@ -715,6 +745,21 @@ async function renderSettings() {
           <label class="check"><input type="checkbox" id="darkTheme" ${localStorage.theme === "dark" ? "checked" : ""}> Dark theme</label>
         </div>
       </div>
+      <div class="card" id="ttCard">
+        <div class="card-head"><h2>TikTok app</h2>${s.tiktok.key_set ? chip("good", "✓", "keys set") : chip("", "○", "set nahi")}</div>
+        <ol class="hint" style="margin:0 0 12px;padding-left:18px">
+          <li><b>developers.tiktok.com</b> pe app banao → products: <b>Login Kit</b> (Desktop) + <b>Content Posting API</b> (Direct Post ON)</li>
+          <li>Scopes: <code>video.publish</code>, <code>video.list</code>, <code>user.info.basic</code></li>
+          <li>Redirect URI mein ye daalo: <code>${esc(s.tiktok.redirect_uri)}</code></li>
+          <li>Client key + secret neeche daalo → Save → Pages mein TikTok "Connect"</li>
+          <li>Audit hone tak videos sirf <b>private</b> jaayengi (TikTok ka rule). Public ke liye TikTok se app audit karwao.</li>
+        </ol>
+        <div class="form-grid">
+          <label class="field"><span>Client key</span><input type="text" name="tt_key" autocomplete="off" placeholder="${s.tiktok.key_set ? "set hai (badalna ho to hi)" : "aw..."}"></label>
+          <label class="field"><span>Client secret</span><input type="password" name="tt_secret" autocomplete="off" placeholder="${s.tiktok.key_set ? "••••••" : ""}"></label>
+        </div>
+        <div class="row" style="flex-wrap:nowrap"><input type="url" id="ttPaste" placeholder="Connect ke baad page na khule to address bar ka poora link yahan paste karo"><button type="button" onclick="ttPasteGo()">Connect</button></div>
+      </div>
       <div class="card" id="phoneCard">
         <div class="card-head"><h2>Phone se dashboard</h2>${s.remote.active ? chip("good", "●", "chal raha hai") : s.remote.lan_enabled ? chip("warning", "!", "restart karo") : chip("", "○", "off")}</div>
         <p class="muted" style="margin-top:0">Phone aur PC <b>same Wi-Fi</b> pe hon to phone ke browser mein dashboard khul jayega (PIN ke saath). Ghar ke bahar se control ke liye Telegram use karo.</p>
@@ -800,6 +845,7 @@ async function renderSettings() {
       telegram: { enabled: f.tg_enabled.checked, chat_id: (fd.tg_chat || "").trim(), notify_posts: f.tg_posts.checked, notify_errors: f.tg_errors.checked, notify_campaigns: f.tg_campaigns.checked, notify_summary: f.tg_summary.checked },
       telegram_token: fd.tg_token || null,
       remote: { lan_enabled: f.lan_enabled.checked, port: +fd.remote_port || 8000 },
+      tiktok_client_key: fd.tt_key || null, tiktok_client_secret: fd.tt_secret || null,
       pin: fd.pin || null,
       loop_minutes: +fd.loop_minutes,
       clip: { crop_mode: fd.crop_mode, whisper_model: fd.whisper_model, min_seconds: +fd.min_seconds, max_seconds: +fd.max_seconds, caption_highlight_color: (fd.caption_highlight_color || "FFFF00").replace("#", "").toUpperCase(), captions: f.captions.checked, caption_uppercase: f.caption_uppercase.checked, hook_text: f.hook_text.checked, progress_bar: f.progress_bar.checked, zoom: f.zoom.checked, hook_seconds: +fd.hook_seconds || 0, music_volume: +fd.music_volume || 0 },
@@ -828,6 +874,7 @@ async function vyroLogin(mode = "bot", link = "") {
   setTimeout(() => STATE.tab === "settings" && renderSettings(), 15000);
 }
 async function syncEarnings() { await act(() => api("/api/vyro/sync-earnings", { method: "POST" })); setTimeout(() => STATE.tab === "earnings" && renderEarnings(), 90000); }
+async function ttPasteGo() { await act(() => api("/api/tiktok/paste", { method: "POST", body: { url: $("#ttPaste").value } })); }
 async function tgTest() { await act(() => api("/api/telegram/test", { method: "POST" })); }
 async function tgUse() { await act(() => api("/api/telegram/use-pending", { method: "POST" })); renderSettings(); }
 async function vyroLoginDone() { await act(() => api("/api/vyro/login-done", { method: "POST" })); setTimeout(renderSettings, 20000); }

@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-from clipper import instagram, network, pipeline, telegram, uploader, vpn, vyro
+from clipper import instagram, network, pipeline, telegram, tiktok, uploader, vpn, vyro
 from clipper.telegram import notify
 from clipper.botconfig import BotConfig, Page
 from clipper import browser_agent
@@ -67,13 +67,16 @@ def page_platforms(page: Page) -> list[str]:
         out.append("youtube")
     if page.instagram and page.instagram.enabled:
         out.append("instagram")
+    if page.tiktok and page.tiktok.enabled:
+        out.append("tiktok")
     return out
 
 
 def platform_allowed(platform: str, campaign_platforms: list[str]) -> bool:
     if not campaign_platforms:
         return True  # campaign didn't say; assume all
-    names = {"youtube": ("youtube", "shorts", "yt"), "instagram": ("instagram", "reels", "ig")}
+    names = {"youtube": ("youtube", "shorts", "yt"), "instagram": ("instagram", "reels", "ig"),
+             "tiktok": ("tiktok", "tik tok", "tt")}
     return any(any(n in p.lower() for n in names[platform]) for p in campaign_platforms)
 
 
@@ -205,7 +208,7 @@ def make_clips(cfg: BotConfig, st: State) -> None:
 
 def next_slot(st: State, page: Page, platform: str) -> tuple[float, int, int]:
     """(epoch seconds when the next post is allowed, posts in last 24h, daily limit)."""
-    limit = page.youtube.max_per_day if platform == "youtube" else page.instagram.max_per_day
+    limit = {"youtube": page.youtube, "instagram": page.instagram, "tiktok": page.tiktok}[platform].max_per_day
     recent = st.posts_since(page.name, platform, 24)
     t = time.time()
     if recent:
@@ -235,8 +238,10 @@ def post_due(cfg: BotConfig, st: State) -> None:
             log.info(f"Posting to {page.name}/{platform}: {meta['title']}")
             try:
                 url, pid = publish(page, platform, meta)
+                # private TikTok posts (SELF_ONLY, or no public video link came back) can't earn on Vyro
+                private = platform == "tiktok" and (page.tiktok.privacy == "SELF_ONLY" or "/video/" not in url)
                 st.record_post(clip["id"], platform, page.name, url, None, pid,
-                               "not_needed" if is_manual(clip["campaign_url"]) else None)
+                               "not_needed" if is_manual(clip["campaign_url"]) or private else None)
                 log.info(f"  -> {url}")
                 notify("posts", f"✅ Post ho gaya ({page.name} · {platform})\n{meta['title']}\n{url}")
             except Exception as e:
@@ -266,8 +271,13 @@ def publish(page: Page, platform: str, meta: dict) -> tuple[str, str]:
         url = uploader.upload_short(path, meta["title"], meta["final_description"], meta["hashtags"],
                                     y.privacy, y.token_file, y.client_secret)
         return url, uploader.video_id(url)
-    ig = page.instagram
     caption = f"{meta['title']}\n\n{meta['final_description']}"
+    if platform == "tiktok":
+        t = page.tiktok
+        url, pid, _ = tiktok.post_video(path, caption, t.token_file or f"tokens/tiktok_{page.name}.json",
+                                        t.privacy, t.username)
+        return url, pid
+    ig = page.instagram
     return instagram.post_reel(path, caption, ig.user_id, os.getenv(ig.token_env, ""), ig.graph_version)
 
 
@@ -320,6 +330,16 @@ def refresh_stats(cfg: BotConfig, st: State) -> None:
                         st.record_stats(p["clip_id"], "youtube", *stats[p["platform_id"]])
             except Exception as e:
                 log.warning(f"YouTube stats failed for {page.name}: {e}")
+        tt = [p for p in mine if p["platform"] == "tiktok" and p["platform_id"] and p["platform_id"].isdigit()]
+        if tt and page.tiktok:
+            try:
+                stats = tiktok.get_stats([p["platform_id"] for p in tt],
+                                         page.tiktok.token_file or f"tokens/tiktok_{page.name}.json")
+                for p in tt:
+                    if p["platform_id"] in stats:
+                        st.record_stats(p["clip_id"], "tiktok", *stats[p["platform_id"]])
+            except Exception as e:
+                log.warning(f"TikTok stats failed for {page.name}: {e}")
         if page.instagram:
             token = os.getenv(page.instagram.token_env, "")
             for p in (p for p in mine if p["platform"] == "instagram"):

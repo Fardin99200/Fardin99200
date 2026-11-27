@@ -57,7 +57,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import bot
-from clipper import browser_agent, network, telegram, vpn
+from clipper import browser_agent, network, telegram, tiktok, vpn
 from clipper.botconfig import BotConfig, Page
 from clipper.state import State
 
@@ -295,6 +295,10 @@ def warnings(c: BotConfig, st: State) -> list[dict]:
         add("warning", f"YouTube ke liye {file} nahi mili ({', '.join(names)}). README: YouTube setup", "pages")
     if not_connected:
         add("warning", f"YouTube connect nahi hai: {', '.join(not_connected)}. Pages mein 'Connect' dabao.", "pages")
+    tt_missing = [p.name for p in c.pages if p.enabled and p.tiktok and p.tiktok.enabled
+                  and not Path(p.tiktok.token_file or f"tokens/tiktok_{p.name}.json").exists()]
+    if tt_missing:
+        add("warning", f"TikTok connect nahi hai: {', '.join(tt_missing)}. Pages mein 'Connect' dabao.", "pages")
     if no_token:
         add("warning", f"Instagram token nahi hai: {', '.join(no_token)}. Page edit karke token daalo.", "pages")
     return w
@@ -346,7 +350,7 @@ def dashboard():
     capacity = 0
     for p in c.pages:
         if p.enabled:
-            capacity += sum(p.youtube.max_per_day if pf == "youtube" else p.instagram.max_per_day
+            capacity += sum({"youtube": p.youtube, "instagram": p.instagram, "tiktok": p.tiktok}[pf].max_per_day
                             for pf in bot.page_platforms(p))
     return {**o, "daily": daily_series(st, 30), "by_page": pages, "capacity_today": capacity}
 
@@ -361,6 +365,56 @@ def network_check(refresh: bool = False):
 
 class Toggle(BaseModel):
     enabled: bool
+
+
+def tiktok_token_file(page: str) -> str:
+    p = cfg().page(page)
+    return (p.tiktok.token_file if p and p.tiktok and p.tiktok.token_file else f"tokens/tiktok_{page}.json")
+
+
+@app.get("/api/tiktok/auth-url")
+def tiktok_auth(page: str):
+    p = cfg().page(page)
+    if not p or not p.tiktok:
+        raise HTTPException(404, "Is page pe TikTok set nahi hai")
+    try:
+        return {"url": tiktok.auth_url(page, SERVER_PORT)}
+    except tiktok.TikTokError as e:
+        raise HTTPException(400, str(e))
+
+
+def _tiktok_done(code: str, state: str) -> str:
+    return tiktok.finish_auth(code, state, SERVER_PORT, tiktok_token_file)
+
+
+@app.get("/tiktok/callback", response_class=HTMLResponse)
+def tiktok_callback(code: str = "", state: str = "", error: str = "", error_description: str = ""):
+    if error:
+        return f"<h2>TikTok login fail: {error}</h2><p>{error_description}</p>"
+    try:
+        page = _tiktok_done(code, state)
+    except tiktok.TikTokError as e:
+        return HTMLResponse(f"<h2>TikTok connect nahi hua</h2><p>{e}</p>", 400)
+    return f"<h2>✅ TikTok connect ho gaya ({page})</h2><p>Ye tab band karke Rare Cash pe wapas jao.</p>"
+
+
+class TikTokPasteIn(BaseModel):
+    url: str
+
+
+@app.post("/api/tiktok/paste")
+def tiktok_paste(body: TikTokPasteIn):
+    """For when TikTok redirects somewhere else: paste the full address bar URL here."""
+    from urllib.parse import parse_qs, urlparse
+    q = parse_qs(urlparse(body.url.strip()).query)
+    code, state = (q.get("code") or [""])[0], (q.get("state") or [""])[0]
+    if not code or not state:
+        raise HTTPException(400, "Is link mein code nahi mila. Login ke baad address bar ka poora link paste karo.")
+    try:
+        page = _tiktok_done(code, state)
+    except tiktok.TikTokError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "message": f"TikTok connect ho gaya ({page})"}
 
 
 @app.post("/api/vyro/sync-earnings")
@@ -520,6 +574,7 @@ def page_info(p: Page, st: State) -> dict:
     d["youtube_connected"] = bool(p.youtube and Path(p.youtube.token_file).exists())
     d["youtube_connecting"] = st.get(f"yt_connect_{p.name}", "")
     d["instagram_token_set"] = bool(p.instagram and os.getenv(p.instagram.token_env))
+    d["tiktok_connected"] = bool(p.tiktok and Path(tiktok_token_file(p.name)).exists())
     for platform in bot.page_platforms(p):
         _, today, limit = bot.next_slot(st, p, platform)
         d[f"{platform}_today"] = f"{today}/{limit}"
@@ -549,6 +604,8 @@ def pages_save(body: PageIn):
         raise HTTPException(400, "Page ka naam chahiye")
     if p.youtube and not p.youtube.token_file:
         p.youtube.token_file = f"tokens/youtube_{p.name}.json"
+    if p.tiktok and not p.tiktok.token_file:
+        p.tiktok.token_file = f"tokens/tiktok_{p.name}.json"
     if p.instagram and not p.instagram.token_env:
         p.instagram.token_env = f"IG_TOKEN_{p.name.upper()}"
     old = body.original_name or p.name
@@ -859,6 +916,7 @@ def settings_get():
     return {
         "vyro": c.vyro.model_dump(),
         "network": c.network.model_dump(),
+        "tiktok": {"key_set": bool(tiktok.keys()[0] and tiktok.keys()[1]), "redirect_uri": tiktok.redirect_uri(SERVER_PORT)},
         "remote": {**c.remote.model_dump(), "pin_set": bool(db().get("pin_hash")), "lan_ip": lan_ip(),
                    "active": SERVER_HOST != "127.0.0.1", "port_now": SERVER_PORT},
         "telegram": {**c.telegram.model_dump(), "token_set": bool(telegram.token()),
@@ -875,6 +933,8 @@ def settings_get():
 
 
 class SettingsIn(BaseModel):
+    tiktok_client_key: str | None = None
+    tiktok_client_secret: str | None = None
     remote: dict | None = None
     pin: str | None = None
     vyro: dict | None = None
@@ -892,6 +952,10 @@ def settings_save(body: SettingsIn):
     if body.vyro:
         c.vyro = c.vyro.model_copy(update={k: v for k, v in body.vyro.items() if k in c.vyro.model_fields})
         c.vyro = type(c.vyro)(**c.vyro.model_dump())  # re-validate
+    if body.tiktok_client_key:
+        env_set("TIKTOK_CLIENT_KEY", body.tiktok_client_key.strip())
+    if body.tiktok_client_secret:
+        env_set("TIKTOK_CLIENT_SECRET", body.tiktok_client_secret.strip())
     if body.remote is not None:
         c.remote = type(c.remote)(**{**c.remote.model_dump(), **body.remote})
     if body.pin:

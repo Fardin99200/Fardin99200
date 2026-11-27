@@ -62,6 +62,14 @@ class InstagramSettings(Strict):
     max_per_day: int = 3
 
 
+class TikTokSettings(Strict):
+    enabled: bool = True
+    token_file: str = ""
+    username: str = ""            # your @handle, used to build post links
+    privacy: str = "SELF_ONLY"    # PUBLIC_TO_EVERYONE once TikTok has audited your app
+    max_per_day: int = 3
+
+
 class Page(Strict):
     name: str
     niche: str
@@ -72,6 +80,7 @@ class Page(Strict):
     handles: list[str] = []  # your usernames on this page, in case Vyro's form asks for them
     youtube: YouTubeSettings | None = None
     instagram: InstagramSettings | None = None
+    tiktok: TikTokSettings | None = None
 
 
 class BotConfig(Strict):
