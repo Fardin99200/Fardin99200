@@ -58,7 +58,8 @@ from clipper.state import State
 ROOT = APP_DIR
 ENV_FILE = APP_DIR / ".env"
 WEB = RES_DIR / "web"
-DEFAULT_CPM = 3.0  # $ per 1000 views when a campaign's rate is unknown
+DEFAULT_CPM = 3.0
+SERVER_HOST, SERVER_PORT = "127.0.0.1", 8000  # $ per 1000 views when a campaign's rate is unknown
 
 engine_stop = threading.Event()
 engine: threading.Thread | None = None
@@ -86,6 +87,90 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Rare Cash", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=WEB), name="static")
+
+# ---- phone access: anything not from this PC needs the PIN ------------------------------
+import hashlib
+import hmac
+import secrets
+import socket
+
+from fastapi import Request
+from fastapi.responses import JSONResponse, RedirectResponse
+
+LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
+_fails: dict[str, list[float]] = {}
+
+
+def _pin_hash(pin: str, salt: str) -> str:
+    return hashlib.pbkdf2_hmac("sha256", pin.encode(), salt.encode(), 200_000).hex()
+
+
+def _session_secret(st: State) -> str:
+    sec = st.get("session_secret")
+    if not sec:
+        sec = secrets.token_hex(32)
+        st.set("session_secret", sec)
+    return sec
+
+
+def _session_token(st: State) -> str:
+    # changes whenever the PIN changes, so old phone logins stop working
+    return hmac.new(_session_secret(st).encode(), (st.get("pin_hash") or "").encode(), "sha256").hexdigest()
+
+
+def lan_ip() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sk:
+            sk.connect(("10.255.255.255", 1))  # no packet is sent; this just picks the Wi-Fi address
+            return sk.getsockname()[0]
+    except OSError:
+        return ""
+
+
+PIN_PAGE = """<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rare Cash</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#edf2f8;font:16px system-ui,sans-serif}
+form{background:#fff;padding:28px;border-radius:22px;box-shadow:0 8px 24px rgba(0,0,0,.08);width:min(340px,90vw)}
+h1{font:500 26px Georgia,serif;margin:0 0 6px}p{color:#666;margin:0 0 18px}input{width:100%;font-size:22px;letter-spacing:6px;text-align:center;
+padding:12px;border:1px solid #dde3ea;border-radius:12px;box-sizing:border-box}button{margin-top:14px;width:100%;padding:13px;border:0;border-radius:12px;
+background:#111;color:#fff;font-size:16px;font-weight:600}.e{color:#dc3c3d;margin-top:10px}</style></head><body>
+<form method="post" action="/auth"><h1>Rare Cash</h1><p>Phone se kholne ke liye PIN daalo</p>
+<input name="pin" type="password" inputmode="numeric" autocomplete="current-password" autofocus required>
+<button>Kholo</button>__ERR__</form></body></html>"""
+
+
+@app.middleware("http")
+async def phone_guard(request: Request, call_next):
+    host = request.client.host if request.client else ""
+    if host in LOCAL_HOSTS or request.url.path == "/auth":
+        return await call_next(request)
+    st = db()
+    if not st.get("pin_hash"):
+        return HTMLResponse(PIN_PAGE.replace("__ERR__", '<div class="e">PIN set nahi hai. PC pe Settings → Phone access mein PIN banao.</div>'), 403)
+    if hmac.compare_digest(request.cookies.get("rc_session", ""), _session_token(st)):
+        return await call_next(request)
+    if request.url.path.startswith("/api") or request.url.path.startswith("/media"):
+        return JSONResponse({"detail": "PIN chahiye"}, 401)
+    return HTMLResponse(PIN_PAGE.replace("__ERR__", ""), 401)
+
+
+@app.post("/auth")
+async def auth(request: Request):
+    host = request.client.host if request.client else "?"
+    now = time.time()
+    recent = [t for t in _fails.get(host, []) if now - t < 300]
+    if len(recent) >= 5:
+        return HTMLResponse(PIN_PAGE.replace("__ERR__", '<div class="e">Bahut galat try. 5 minute baad.</div>'), 429)
+    form = await request.form()
+    st = db()
+    pin = str(form.get("pin", ""))
+    ok = bool(st.get("pin_hash")) and hmac.compare_digest(_pin_hash(pin, st.get("pin_salt", "")), st.get("pin_hash"))
+    if not ok:
+        _fails[host] = recent + [now]
+        return HTMLResponse(PIN_PAGE.replace("__ERR__", '<div class="e">Galat PIN</div>'), 401)
+    _fails.pop(host, None)
+    resp = RedirectResponse("/", status_code=303)
+    resp.set_cookie("rc_session", _session_token(st), max_age=30 * 86400, httponly=True, samesite="lax")
+    return resp
 
 
 def db() -> State:
@@ -753,6 +838,8 @@ def settings_get():
     return {
         "vyro": c.vyro.model_dump(),
         "network": c.network.model_dump(),
+        "remote": {**c.remote.model_dump(), "pin_set": bool(db().get("pin_hash")), "lan_ip": lan_ip(),
+                   "active": SERVER_HOST != "127.0.0.1", "port_now": SERVER_PORT},
         "telegram": {**c.telegram.model_dump(), "token_set": bool(telegram.token()),
                      "pending_chat": db().get("telegram_pending_chat", "")},
         "loop_minutes": c.loop_minutes,
@@ -766,6 +853,8 @@ def settings_get():
 
 
 class SettingsIn(BaseModel):
+    remote: dict | None = None
+    pin: str | None = None
     vyro: dict | None = None
     network: dict | None = None
     telegram: dict | None = None
@@ -781,6 +870,18 @@ def settings_save(body: SettingsIn):
     if body.vyro:
         c.vyro = c.vyro.model_copy(update={k: v for k, v in body.vyro.items() if k in c.vyro.model_fields})
         c.vyro = type(c.vyro)(**c.vyro.model_dump())  # re-validate
+    if body.remote is not None:
+        c.remote = type(c.remote)(**{**c.remote.model_dump(), **body.remote})
+    if body.pin:
+        pin = body.pin.strip()
+        if not (pin.isdigit() and 4 <= len(pin) <= 12):
+            raise HTTPException(400, "PIN 4 se 12 number ka hona chahiye")
+        st = db()
+        salt = secrets.token_hex(16)
+        st.set("pin_salt", salt)
+        st.set("pin_hash", _pin_hash(pin, salt))
+    if c.remote.lan_enabled and not db().get("pin_hash"):
+        raise HTTPException(400, "Phone access ke liye pehle PIN banao")
     if body.telegram is not None:
         c.telegram = type(c.telegram)(**{**c.telegram.model_dump(), **body.telegram})
     if body.telegram_token:
@@ -888,17 +989,23 @@ def main() -> None:
 
     load_dotenv(ENV_FILE)
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--port", type=int, default=None)
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--selftest", action="store_true", help="check that every part works, then exit")
     args = ap.parse_args()
     if args.selftest:
         sys.exit(selftest())
-    url = f"http://localhost:{args.port}"
+    global SERVER_HOST, SERVER_PORT
+    c = cfg()
+    SERVER_PORT = args.port or c.remote.port
+    SERVER_HOST = "0.0.0.0" if c.remote.lan_enabled and db().get("pin_hash") else "127.0.0.1"
+    url = f"http://localhost:{SERVER_PORT}"
     print(f"\n  Rare Cash dashboard: {url}\n  (band karne ke liye ye window band karo ya Ctrl+C)\n")
     if not args.no_browser:
         threading.Timer(1.5, lambda: webbrowser.open(url)).start()
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    if SERVER_HOST != "127.0.0.1":
+        print(f"  Phone pe (same Wi-Fi): http://{lan_ip()}:{SERVER_PORT}  (PIN ke saath)\n")
+    uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT, log_level="warning")
 
 
 if __name__ == "__main__":

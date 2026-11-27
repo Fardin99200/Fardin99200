@@ -40,6 +40,12 @@ class TelegramSettings(Strict):
     summary_hour: int = 21
 
 
+class RemoteSettings(Strict):
+    # open the dashboard from your phone on the same Wi-Fi (needs a PIN; restart Rare Cash after changing)
+    lan_enabled: bool = False
+    port: int = 8000
+
+
 class YouTubeSettings(Strict):
     enabled: bool = True
     token_file: str
@@ -72,6 +78,7 @@ class BotConfig(Strict):
     vyro: VyroSettings = Field(default_factory=VyroSettings)
     network: NetworkSettings = Field(default_factory=NetworkSettings)
     telegram: TelegramSettings = Field(default_factory=TelegramSettings)
+    remote: RemoteSettings = Field(default_factory=RemoteSettings)
     loop_minutes: int = 10
     pages: list[Page] = []
     clip_defaults: dict = {}  # any Campaign field (crop_mode, whisper_model, captions, ...)

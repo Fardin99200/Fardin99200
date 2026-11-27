@@ -703,6 +703,17 @@ async function renderSettings() {
           <label class="check"><input type="checkbox" id="darkTheme" ${localStorage.theme === "dark" ? "checked" : ""}> Dark theme</label>
         </div>
       </div>
+      <div class="card" id="phoneCard">
+        <div class="card-head"><h2>Phone se dashboard</h2>${s.remote.active ? chip("good", "●", "chal raha hai") : s.remote.lan_enabled ? chip("warning", "!", "restart karo") : chip("", "○", "off")}</div>
+        <p class="muted" style="margin-top:0">Phone aur PC <b>same Wi-Fi</b> pe hon to phone ke browser mein dashboard khul jayega (PIN ke saath). Ghar ke bahar se control ke liye Telegram use karo.</p>
+        ${s.remote.active && s.remote.lan_ip ? `<div class="vpn-hero"><div style="flex:1"><small>Phone ke browser mein ye kholo</small><div class="big" style="font-size:24px">http://${esc(s.remote.lan_ip)}:${s.remote.port_now}</div></div></div>` : ""}
+        <div class="form-grid">
+          <label class="field"><span>PIN ${s.remote.pin_set ? "(set hai)" : "(4-12 number)"}</span><input type="password" name="pin" inputmode="numeric" autocomplete="new-password" placeholder="${s.remote.pin_set ? "•••• (badalna ho to hi)" : "jaise 482913"}"></label>
+          <label class="field"><span>Port</span><input type="number" name="remote_port" min="1024" max="65535" value="${s.remote.port}"></label>
+        </div>
+        <label class="check"><input type="checkbox" name="lan_enabled" ${s.remote.lan_enabled ? "checked" : ""}> Phone access ON</label>
+        <div class="hint">ON karne ke baad Rare Cash band karke dobara kholo. Windows Firewall poochhe to "Private networks" pe <b>Allow</b> karo.</div>
+      </div>
       <div class="card" id="tgCard">
         <div class="card-head"><h2>Telegram alerts + phone control</h2>${s.telegram.enabled && s.telegram.chat_id && s.telegram.token_set ? chip("good", "✓", "connected") : chip("", "○", "off")}</div>
         <p class="muted" style="margin-top:0">Post hua, error aaya, VPN gira, login expire hua: sab phone pe aayega. Phone se <code>/on</code> <code>/off</code> <code>/status</code> <code>/run</code> <code>/today</code> bhej ke bot control karo.</p>
@@ -776,6 +787,8 @@ async function renderSettings() {
       network: { vpn_required: f.vpn_required.checked, allowed_countries: (fd.allowed_countries || "").split(",") },
       telegram: { enabled: f.tg_enabled.checked, chat_id: (fd.tg_chat || "").trim(), notify_posts: f.tg_posts.checked, notify_errors: f.tg_errors.checked, notify_campaigns: f.tg_campaigns.checked, notify_summary: f.tg_summary.checked },
       telegram_token: fd.tg_token || null,
+      remote: { lan_enabled: f.lan_enabled.checked, port: +fd.remote_port || 8000 },
+      pin: fd.pin || null,
       loop_minutes: +fd.loop_minutes,
       clip: { crop_mode: fd.crop_mode, whisper_model: fd.whisper_model, min_seconds: +fd.min_seconds, max_seconds: +fd.max_seconds, caption_highlight_color: (fd.caption_highlight_color || "FFFF00").replace("#", "").toUpperCase(), captions: f.captions.checked, caption_uppercase: f.caption_uppercase.checked },
       api_key: fd.api_key || null,
