@@ -1,0 +1,9 @@
+.env
+client_secret*.json
+token.json
+output/
+downloads/
+__pycache__/
+*.pyc
+.venv/
+campaign.yaml

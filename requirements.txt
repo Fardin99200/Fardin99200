@@ -1,0 +1,9 @@
+anthropic>=2.14.0
+pydantic>=2
+python-dotenv
+pyyaml
+yt-dlp
+faster-whisper
+opencv-python-headless>=4.8,<5  # v5 removed Haar face detection
+google-api-python-client
+google-auth-oauthlib
