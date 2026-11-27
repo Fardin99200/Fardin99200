@@ -8,13 +8,44 @@ from pathlib import Path
 import yt_dlp
 
 
+YT_ID = re.compile(r"(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|live/|embed/)|youtu\.be/)([A-Za-z0-9_-]{11})")
+DRIVE_ID = re.compile(r"drive\.google\.com/(?:file/d/|open\?(?:.*&)?id=|uc\?(?:.*&)?id=)([A-Za-z0-9_-]{20,})")
+
+
+def canonical(source: str) -> str:
+    """The same video under different links maps to one key (youtu.be, shorts, ?t=, tracking params...)."""
+    s = source.strip()
+    if Path(s).exists():
+        return str(Path(s).resolve())
+    m = YT_ID.search(s)
+    if m:
+        return f"youtube:{m.group(1)}"
+    m = DRIVE_ID.search(s)
+    if m:
+        return f"drive:{m.group(1)}"
+    s = re.sub(r"[?&](utm_[a-z]+|si|feature|fbclid|igshid|t)=[^&#]*", "", s).rstrip("?&/")
+    return s.lower().replace("://www.", "://")
+
+
 def source_id(source: str) -> str:
     """Stable short id for a link or file, used for output folder names."""
     path = Path(source)
     if path.exists():
         stem = re.sub(r"[^A-Za-z0-9_-]+", "_", path.stem)[:40]
         return f"{stem}_{hashlib.md5(str(path.resolve()).encode()).hexdigest()[:6]}"
-    return hashlib.md5(source.encode()).hexdigest()[:12]
+    return hashlib.md5(canonical(source).encode()).hexdigest()[:12]
+
+
+def content_key(video: Path) -> str:
+    """Fast fingerprint of a video file: size + first and last 2 MB."""
+    size = video.stat().st_size
+    h = hashlib.sha1(str(size).encode())
+    with open(video, "rb") as f:
+        h.update(f.read(2 * 1024 * 1024))
+        if size > 4 * 1024 * 1024:
+            f.seek(-2 * 1024 * 1024, 2)
+            h.update(f.read())
+    return h.hexdigest()[:16]
 
 
 def fetch(source: str, download_dir: str | Path) -> tuple[Path, str]:

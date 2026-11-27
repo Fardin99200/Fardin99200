@@ -20,11 +20,24 @@ def make_clips(source: str, c: Campaign, out_root: Path) -> list[dict]:
     Results are cached on disk, so calling again for the same source is cheap."""
     sid = download.source_id(source)
     out_dir = out_root / sid
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_root.mkdir(parents=True, exist_ok=True)
 
     print("[1/4] Downloading...")
     video, title = download.fetch(source, c.download_dir)
     _, _, duration = render.probe(video)
+
+    # same file reached through another link or campaign? reuse its clips instead of making copies
+    index_file = out_root / "_media_index.json"
+    index = json.loads(index_file.read_text(encoding="utf-8")) if index_file.exists() else {}
+    key = download.content_key(video)
+    if key in index and index[key] != sid and (out_root / index[key] / "plan.json").exists():
+        print(f"  Ye video pehle bhi aa chuka hai ({index[key]}), wahi clips use honge")
+        sid = index[key]
+        out_dir = out_root / sid
+    else:
+        index[key] = sid
+        index_file.write_text(json.dumps(index, indent=1), encoding="utf-8")
+    out_dir.mkdir(parents=True, exist_ok=True)
     print(f"  {title or video.name} ({duration/60:.1f} min)")
 
     print("[2/4] Transcribing...")
