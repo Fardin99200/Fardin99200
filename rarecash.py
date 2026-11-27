@@ -363,6 +363,13 @@ class Toggle(BaseModel):
     enabled: bool
 
 
+@app.post("/api/vyro/sync-earnings")
+def vyro_sync_earnings():
+    db().set("earnings_sync", "1")
+    start_engine()
+    return {"ok": True, "message": "Vyro se kamai padh raha hai (1-2 minute)"}
+
+
 @app.post("/api/telegram/test")
 def telegram_test():
     c = cfg()
@@ -803,7 +810,15 @@ def earnings(days: int = 14):
         b["posts"] += 1
 
     series = daily_series(st, days)
+    vy = json.loads(st.get("vyro_earnings", "{}") or "{}")
+    vyro_by_post = {(r["clip_id"], r["platform"]): r for r in st.db.execute(
+        "SELECT clip_id, platform, vyro_views, vyro_earned, vyro_state FROM posts WHERE vyro_state IS NOT NULL")}
+    for r in rows:
+        v = vyro_by_post.get((r["clip_id"], r["platform"]))
+        r["vyro_earned"] = v["vyro_earned"] if v else None
+        r["vyro_state"] = v["vyro_state"] if v else None
     return {
+        "vyro": vy,
         "total_views": sum(r["views"] for r in rows),
         "total_earned": round(sum(r["earned"] for r in rows), 2),
         "default_cpm": DEFAULT_CPM,

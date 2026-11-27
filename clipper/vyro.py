@@ -46,6 +46,30 @@ CAMPAIGN_DETAIL_SCHEMA = {
     "required": ["joined", "active", "rules", "platforms", "material_links"],
 }
 
+EARNINGS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "balance_usd": {"type": ["number", "null"], "description": "Available balance in US dollars"},
+        "pending_usd": {"type": ["number", "null"], "description": "Pending / not yet approved earnings"},
+        "total_earned_usd": {"type": ["number", "null"], "description": "Lifetime earnings"},
+        "submissions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "post_url": {"type": "string"},
+                    "campaign": {"type": "string"},
+                    "views": {"type": ["integer", "null"]},
+                    "earned_usd": {"type": ["number", "null"]},
+                    "status": {"type": "string", "description": "approved / pending / rejected / paid, as shown"},
+                },
+                "required": ["post_url"],
+            },
+        },
+    },
+    "required": ["submissions"],
+}
+
 SUBMIT_SCHEMA = {"type": "object", "properties": {"confirmation": {"type": "string"}}, "required": ["confirmation"]}
 
 
@@ -98,6 +122,20 @@ success=false and explain."""
     out = _check(run_task(b, goal, SUBMIT_SCHEMA, allowed_text=[post_url, *handles], start_url=campaign_url,
                           max_steps=cfg.vyro.agent_max_steps))
     return bool(out.get("success")), str(out.get("notes", ""))
+
+
+def read_earnings(b: Browser, cfg: BotConfig) -> dict:
+    goal = """Read my earnings. This is READ-ONLY: never click withdraw, cash out, payout request, claim, or
+anything that moves money or changes settings.
+1. Find the earnings / wallet / balance / dashboard page and read the available balance, pending amount and
+   lifetime total (in US dollars).
+2. Find the list of my submissions (often "My submissions", "Clips" or inside each campaign) and for each
+   submitted post read its post URL, campaign, views, money earned and status (approved / pending / rejected).
+   Scroll to see more; collect up to 60."""
+    out = _check(run_task(b, goal, EARNINGS_SCHEMA, start_url=cfg.vyro.start_url, max_steps=cfg.vyro.agent_max_steps))
+    if not out.get("success"):
+        raise RuntimeError(f"Earnings nahi padh paya: {out.get('notes')}")
+    return out.get("result") or {}
 
 
 class Route(BaseModel):

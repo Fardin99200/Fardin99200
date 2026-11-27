@@ -330,6 +330,24 @@ def refresh_stats(cfg: BotConfig, st: State) -> None:
                     log.warning(f"Instagram stats failed for {p['url']}: {e}")
 
 
+def sync_earnings(cfg: BotConfig, st: State, force: bool = False) -> None:
+    """Read real earnings from Vyro twice a day (or now, when asked from the dashboard)."""
+    if not force and st.get("earnings_sync") != "1" and \
+            time.time() - float(st.get("last_earnings_sync", "0")) < 12 * 3600:
+        return
+    if not st.db.execute("SELECT 1 FROM posts WHERE vyro_status='submitted' LIMIT 1").fetchone() and not force \
+            and st.get("earnings_sync") != "1":
+        return  # nothing submitted yet, nothing to read
+    st.set("earnings_sync", "0")
+    st.set("last_earnings_sync", time.time())
+    status(st, "Vyro se asli kamai padh raha hai")
+    with browser(cfg) as b:
+        data = vyro.read_earnings(b, cfg)
+    matched = st.record_vyro_earnings(data)
+    log.info(f"Vyro earnings: balance {data.get('balance_usd')} pending {data.get('pending_usd')} "
+             f"total {data.get('total_earned_usd')} · {matched} posts matched")
+
+
 # ---------------------------------------------------------------- control
 
 LOGIN_HINTS = ("login", "log-in", "signin", "sign-in", "sign_in", "signup", "sign-up", "auth")
@@ -409,7 +427,7 @@ def setup_youtube(cfg: BotConfig, only_page: str | None = None) -> None:
             uploader._service(Path(page.youtube.token_file), Path(page.youtube.client_secret))
 
 
-NEEDS_VPN = {"scan", "post_due", "submit_due"}
+NEEDS_VPN = {"scan", "post_due", "submit_due", "sync_earnings"}
 
 
 def vpn_wanted(st: State) -> bool:
@@ -428,7 +446,7 @@ def vpn_check(cfg: BotConfig, st: State) -> bool:
 
 def cycle(cfg: BotConfig, st: State) -> None:
     notify.cfg = cfg
-    steps = [make_clips, post_due, submit_due, refresh_stats]
+    steps = [make_clips, post_due, submit_due, refresh_stats, sync_earnings]
     if time.time() - float(st.get("last_scan", "0")) >= cfg.vyro.scan_every_hours * 3600 or st.campaigns("pending"):
         steps.insert(0, scan)
         st.set("last_scan", time.time())
@@ -543,6 +561,14 @@ def run_forever(stop: threading.Event | None = None, once: bool = False) -> None
             st.set("summary_day", day)
             notify("summary", today_text(st))
 
+        if st.get("earnings_sync") == "1" and st.get("enabled", "1") != "1":
+            try:  # asked from the dashboard while the bot is OFF: do just this
+                if vpn_check(cfg, st):
+                    sync_earnings(cfg, st, force=True)
+            except Exception as e:
+                log.error(f"Earnings sync failed: {e}")
+                st.set("earnings_sync", "0")
+
         if st.get("enabled", "1") == "1" or st.get("run_now") == "1" or once:
             st.set("run_now", "0")
             try:
@@ -558,7 +584,8 @@ def run_forever(stop: threading.Event | None = None, once: bool = False) -> None
             status(st, "Bot OFF hai")
 
         while time.time() < wake and not stop.is_set():
-            if st.get("run_now") == "1" or st.get("login_request") == "1" or st.get("login_verify") == "1":
+            if st.get("run_now") == "1" or st.get("login_request") == "1" or st.get("login_verify") == "1" \
+                    or st.get("earnings_sync") == "1":
                 break
             if st.get("enabled", "1") == "0" and not st.get("status", "").startswith("Bot OFF"):
                 status(st, "Bot OFF hai")

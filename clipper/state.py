@@ -72,6 +72,9 @@ MIGRATIONS = [
     ("posts", "views", "INTEGER DEFAULT 0"),
     ("posts", "likes", "INTEGER DEFAULT 0"),
     ("posts", "stats_at", "TEXT"),
+    ("posts", "vyro_views", "INTEGER"),
+    ("posts", "vyro_earned", "REAL"),
+    ("posts", "vyro_state", "TEXT"),
 ]
 
 
@@ -206,6 +209,26 @@ class State:
         self.db.execute("INSERT OR REPLACE INTO stats_history VALUES (?,?,?,?)",
                         (clip_id, platform, datetime.now(timezone.utc).date().isoformat(), views))
         self.db.commit()
+
+    def record_vyro_earnings(self, data: dict) -> int:
+        """Match Vyro's submission list to our posts by URL. Returns how many matched."""
+        def norm(u: str) -> str:
+            return (u or "").split("?")[0].rstrip("/").lower().replace("www.", "").replace("m.youtube.com", "youtube.com")
+        posts = {norm(r["url"]): (r["clip_id"], r["platform"]) for r in
+                 self.db.execute("SELECT clip_id, platform, url FROM posts WHERE status='posted' AND url IS NOT NULL")}
+        matched = 0
+        for sub in data.get("submissions", []):
+            key = posts.get(norm(sub.get("post_url", "")))
+            if not key:
+                continue
+            self.db.execute("UPDATE posts SET vyro_views=?, vyro_earned=?, vyro_state=? WHERE clip_id=? AND platform=?",
+                            (sub.get("views"), sub.get("earned_usd"), sub.get("status"), *key))
+            matched += 1
+        self.db.commit()
+        self.set("vyro_earnings", json.dumps({**{k: data.get(k) for k in ("balance_usd", "pending_usd", "total_earned_usd")},
+                                             "submissions": len(data.get("submissions", [])), "matched": matched,
+                                             "at": datetime.now(timezone.utc).timestamp()}))
+        return matched
 
     def summary(self) -> dict:
         q = lambda sql: self.db.execute(sql).fetchone()[0]

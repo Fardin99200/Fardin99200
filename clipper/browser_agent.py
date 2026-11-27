@@ -19,8 +19,10 @@ from urllib.parse import urlparse
 import anthropic
 
 BLOCKED_CLICK = re.compile(
-    r"withdraw|payout|cash\s*out|wallet|transfer|bank|paypal|delete|remove\s+account|deactivate|"
-    r"log\s*out|sign\s*out|password|billing|leave\s+campaign|unsubscribe",
+    # money movement and account changes are never clicked; viewing an earnings/wallet page is fine
+    r"withdraw|cash\s*out|transfer|request\s+(a\s+)?payout|claim|payout\s+(method|settings|details|info)|"
+    r"add\s+(a\s+)?(bank|card|paypal|wallet)|bank\s+account|connect\s+(bank|paypal|stripe)|paypal|stripe|crypto\s+address|"
+    r"delete|remove\s+account|deactivate|log\s*out|sign\s*out|password|billing|leave\s+campaign|unsubscribe",
     re.I,
 )
 

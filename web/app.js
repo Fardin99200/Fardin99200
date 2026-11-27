@@ -582,7 +582,11 @@ async function renderEarnings() {
   const maxE = Math.max(...e.by_page.map((b) => b.earned), 0.01);
   $("#tab-earnings").innerHTML = `
     <h1>Earnings</h1>
+    <div class="row between" style="margin-bottom:14px"><span></span><button class="primary" onclick="syncEarnings()">⟳ Vyro se asli kamai lao</button></div>
     <div class="grid stats">
+      <div class="card stat"><div class="label">Vyro balance (asli)</div><div class="value">${e.vyro.at ? money(e.vyro.balance_usd) : "–"}</div><div class="sub">${e.vyro.at ? "sync " + ago(e.vyro.at) : "abhi sync nahi hua"}</div></div>
+      <div class="card stat"><div class="label">Vyro pending</div><div class="value">${e.vyro.at ? money(e.vyro.pending_usd) : "–"}</div><div class="sub">approval baaki</div></div>
+      <div class="card stat"><div class="label">Vyro total kamai</div><div class="value">${e.vyro.at ? money(e.vyro.total_earned_usd) : "–"}</div><div class="sub">${e.vyro.at ? `${e.vyro.matched}/${e.vyro.submissions} posts match` : "har 12 ghante sync"}</div></div>
       <div class="card stat hero"><div class="label">Estimated kamai</div><div class="value">${money(e.total_earned)}</div><div class="sub">views × campaign CPM</div></div>
       <div class="card stat"><div class="label">Total views</div><div class="value">${fmt(e.total_views)}</div><div class="sub">YouTube + Instagram</div></div>
     </div>
@@ -592,10 +596,10 @@ async function renderEarnings() {
       <div class="card"><h2>Page-wise kamai</h2>${e.by_page.length ? e.by_page.map((b) => `<div class="hbar" data-tip="${esc(b.page)}: ${money(b.earned)} · ${fmt(b.views)} views · ${b.posts} posts"><span class="ellipsis">${esc(b.page)}</span><div class="track"><div class="fill" style="width:${(b.earned / maxE) * 100}%"></div></div><span class="val">${money(b.earned)}</span></div>`).join("") : `<div class="empty">Abhi data nahi</div>`}</div>
     </div>
     <div class="card table-wrap" style="margin-top:16px"><h2>Top posts</h2>${e.top.length ? `<table>
-      <thead><tr><th>Clip</th><th>Page</th><th>Platform</th><th class="num">Views</th><th class="num">Likes</th><th class="num">CPM</th><th class="num">Est. $</th><th>Vyro</th></tr></thead>
+      <thead><tr><th>Clip</th><th>Page</th><th>Platform</th><th class="num">Views</th><th class="num">Likes</th><th class="num">CPM</th><th class="num">Est. $</th><th class="num">Vyro $</th><th>Vyro</th></tr></thead>
       <tbody>${e.top.map((r) => `<tr><td><div class="ellipsis"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a></div></td><td>${esc(r.page)}</td><td>${r.platform === "youtube" ? "YouTube" : "Instagram"}</td>
-        <td class="num">${fmt(r.views)}</td><td class="num">${fmt(r.likes)}</td><td class="num">${r.cpm ? "$" + r.cpm : "–"}</td><td class="num">${money(r.earned)}</td>
-        <td>${r.vyro === "submitted" ? chip("good", "✓", "submitted") : r.vyro === "not_needed" ? chip("", "–", "manual") : r.vyro === "failed" ? chip("serious", "!", "retry") : chip("warning", "◌", "pending")}</td></tr>`).join("")}</tbody></table>`
+        <td class="num">${fmt(r.views)}</td><td class="num">${fmt(r.likes)}</td><td class="num">${r.cpm ? "$" + r.cpm : "–"}</td><td class="num">${money(r.earned)}</td><td class="num">${r.vyro_earned == null ? "–" : money(r.vyro_earned)}</td>
+        <td>${r.vyro_state ? chip(/reject/i.test(r.vyro_state) ? "critical" : /approv|paid/i.test(r.vyro_state) ? "good" : "warning", "•", r.vyro_state) : r.vyro === "submitted" ? chip("good", "✓", "submitted") : r.vyro === "not_needed" ? chip("", "–", "manual") : r.vyro === "failed" ? chip("serious", "!", "retry") : chip("warning", "◌", "pending")}</td></tr>`).join("")}</tbody></table>`
       : `<div class="empty">Posts hone ke baad yahan dikhega</div>`}</div>`;
   barChart($("#earnChart"), e.daily, { key: "views", aria: "Views per day" });
   bindTips($("#tab-earnings"));
@@ -823,6 +827,7 @@ async function vyroLogin(mode = "bot", link = "") {
   await act(() => api("/api/vyro/login", { method: "POST", body: { mode, link: (link || "").trim() } }));
   setTimeout(() => STATE.tab === "settings" && renderSettings(), 15000);
 }
+async function syncEarnings() { await act(() => api("/api/vyro/sync-earnings", { method: "POST" })); setTimeout(() => STATE.tab === "earnings" && renderEarnings(), 90000); }
 async function tgTest() { await act(() => api("/api/telegram/test", { method: "POST" })); }
 async function tgUse() { await act(() => api("/api/telegram/use-pending", { method: "POST" })); renderSettings(); }
 async function vyroLoginDone() { await act(() => api("/api/vyro/login-done", { method: "POST" })); setTimeout(renderSettings, 20000); }
