@@ -37,22 +37,40 @@ Bot ye sab apne aap karta hai:
 - **Kharcha:** Claude API ka kharcha usage pe hota hai. https://platform.claude.com pe monthly spend limit laga dena.
 - Dashboard sirf tumhare PC pe khulta hai (`localhost`), internet pe public nahi hai.
 
-## VPN ke saath chalana (Tier-1 country)
+## Built-in VPN (Tier-1 country, bina VPN app ke)
 
-Rare Cash khud VPN nahi deta. Apna VPN app (NordVPN, ProtonVPN, Surfshark…) PC pe **system-wide ON** rakho,
-taaki browser, YouTube/Instagram upload, sab usi country se jaaye.
-Phir **Settings → VPN guard** ON karo aur countries likho (jaise `US, GB, CA, AU`).
+Rare Cash ke andar VPN hai. Upar **🔒 VPN** button dabao aur Rare Cash ka saara kaam
+(Vyro browser, YouTube/Instagram upload, views) us country ke server se jayega.
+Koi VPN app install nahi karna, admin permission nahi chahiye, aur baaki PC (Chrome, games) normal internet pe rehta hai.
 
-- Dashboard ke upar chip dikhata hai: **✓ VPN: United States** ya **✕ VPN off (India)**
-- VPN band ho gaya to bot **Vyro aur posting rok deta hai**, clips bante rehte hain. VPN wapas aate hi apne aap chalu.
-- Ye check `ipinfo.io` se hota hai (internet kis country se aa raha hai, bas).
+Ye open-source [wireproxy](https://github.com/windtf/wireproxy) (WireGuard) use karta hai.
+Pehli baar Connect karne pe Rare Cash iska ~5 MB engine GitHub se khud download karta hai.
+
+**Ek cheez chahiye: VPN server ki WireGuard config (`.conf` file).** VPN server kisi provider ka hi hota hai, Rare Cash khud server nahi deta:
+- **Proton VPN** (free plan bhi hai): account → Downloads → WireGuard configuration → platform chuno → server (US/UK) → Create → `.conf` download
+- **Surfshark / NordVPN / Mullvad / PIA** (paid): sab "manual setup → WireGuard" mein `.conf` dete hain
+- Ya apna US VPS (~$5/mahina) pe WireGuard server
+
+Phir: **Settings → VPN (built-in) → Server add karo** → `.conf` file chuno → Save → **Connect**.
+Kai servers add kar sakte ho (us-newyork, uk-london…) aur kabhi bhi badal sakte ho.
+
+Safety:
+- **Kill switch:** VPN ON hai aur tunnel gir gaya, to bot ka traffic India IP se *nahi* jata. Requests fail hoti hain,
+  Vyro/posting ruk jati hai, aur Rare Cash har 20 second mein dobara connect karta hai.
+  Sirf "VPN OFF" dabane pe normal internet wapas aata hai.
+- Claude API (`api.anthropic.com`) VPN ke bahar jata hai, kyunki uske liye country matter nahi karti.
+- `.conf` mein tumhari private key hoti hai. Wo sirf `vpn/configs/` mein rehti hai aur dashboard pe kabhi nahi dikhti.
+- **VPN guard** (Settings) ON rakho: internet allowed country (US, GB…) se na aa raha ho to bot kaam rok deta hai.
+
+**VPN engine manually:** agar auto-download na ho to https://github.com/windtf/wireproxy/releases se
+`wireproxy_windows_amd64.tar.gz` download karo, andar ki `wireproxy.exe` ko `vpn/bin/` folder mein rakh do.
 
 Dhyan rakho:
-- VPN sirf tumhara IP badalta hai. Campaign ke **Tier-1 views** ka matlab aksar ye hota hai ki *dekhne wale* US/UK ke hon.
-  Wo audience pe depend karta hai, upload karne wale ke IP pe nahi.
-- Vyro payout ke waqt identity/country verify kar sakta hai. Agar campaign kisi country tak limited hai aur
-  tum wahan se nahi ho, to submissions reject ya payout hold ho sakta hai. Vyro ke rules padh ke hi chalana.
-- Ek hi account pe baar baar country badalna (India ↔ US) suspicious lagta hai. VPN ki ek hi country fix rakho.
+- VPN sirf IP badalta hai. Campaign ke **Tier-1 views** ka matlab aksar ye hota hai ki *dekhne wale* US/UK ke hon.
+  Wo tumhare content aur audience pe depend karta hai.
+- Vyro payout ke waqt identity/country verify kar sakta hai. Campaign kisi country tak limited ho aur tum wahan se nahi ho,
+  to submission reject ya payout hold ho sakta hai. Vyro ke rules padh ke chalana.
+- Ek hi country fix rakho. Account pe India ↔ US baar baar badalna suspicious lagta hai.
 
 ---
 

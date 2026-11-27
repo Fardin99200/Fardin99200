@@ -103,6 +103,7 @@ async function refreshTop() {
     $("#statusText").textContent = o.status;
     $("#engineDot").className = "dot " + (!o.engine_alive ? "dead" : o.enabled ? "on" : "off");
     $("#vpnChip").innerHTML = vpnChip(o.vpn, o.vpn_required);
+    renderVpnBtn(o.tunnel);
     if (STATE.tab === "dashboard") renderDashboard(o);
   } catch (e) {
     $("#statusText").textContent = "Dashboard server se connect nahi ho pa raha";
@@ -116,6 +117,33 @@ $("#powerToggle").addEventListener("change", async (e) => {
   const on = e.target.checked;
   await act(() => api("/api/bot", { method: "POST", body: { enabled: on } }), on ? "Bot ON ho gaya" : "Bot OFF: abhi wala kaam khatam karke ruk jayega");
   refreshTop();
+});
+
+// built-in VPN button
+function renderVpnBtn(t) {
+  if (!t) return;
+  STATE.tunnel = t;
+  const b = $("#vpnBtn"), l = $("#vpnLabel");
+  const state = !t.wanted ? "off" : t.state === "on" ? "on" : t.state === "error" ? "error" : "connecting";
+  b.className = "vpn-btn " + state;
+  l.textContent = state === "off" ? "VPN OFF" : state === "on" ? `VPN ${t.country || "ON"}` : state === "error" ? "VPN error" : "Connecting…";
+  b.title = state === "error" ? t.error : state === "on" ? `Connected: ${t.config} · ${t.ip}` : "Built-in VPN ON / OFF";
+  // the plain location chip is only needed when the built-in VPN isn't used
+  $("#vpnChip").style.display = t.wanted ? "none" : "";
+  if (state === "connecting") setTimeout(pollVpn, 2500);
+}
+async function pollVpn() { try { renderVpnBtn(await api("/api/vpn")); } catch (e) { /* offline */ } }
+$("#vpnBtn").addEventListener("click", async () => {
+  const t = STATE.tunnel || {};
+  try {
+    const r = await api("/api/vpn", { method: "POST", body: { enabled: !t.wanted } });
+    toast(r.message);
+  } catch (e) {
+    toast(e.message, true);
+    if (/server add/i.test(e.message)) location.hash = "settings";
+  }
+  pollVpn();
+  if (STATE.tab === "settings") setTimeout(renderSettings, 600);
 });
 
 // ------------------------------------------------------------------ dashboard
@@ -589,8 +617,31 @@ async function renderLogs() {
 }
 
 // ------------------------------------------------------------------ settings
+function vpnStateChip(vp) {
+  if (!vp.wanted) return chip("", "○", "off");
+  return vp.state === "on" ? chip("good", "●", "connected") : vp.state === "error" ? chip("critical", "✕", "error", vp.error) : chip("warning", "◌", "connecting");
+}
+async function vpnUse(name) {
+  try { toast((await api("/api/vpn", { method: "POST", body: { enabled: true, config: name } })).message); } catch (e) { toast(e.message, true); }
+  pollVpn(); setTimeout(renderSettings, 800);
+}
+async function vpnDelete(name) {
+  if (!confirm(`Server "${name}" delete karna hai?`)) return;
+  await act(() => api(`/api/vpn/configs/${encodeURIComponent(name)}`, { method: "DELETE" }), "Server delete ho gaya");
+  renderSettings();
+}
+async function vpnAdd() {
+  const file = $("#vpnFile").files[0];
+  const text = file ? await file.text() : $("#vpnText").value;
+  const name = $("#vpnName").value || (file ? file.name : "");
+  if (!text.trim()) return toast("Config file chuno ya paste karo", true);
+  if (!name.trim()) return toast("Server ka naam do", true);
+  await act(() => api("/api/vpn/configs", { method: "POST", body: { name, text } }));
+  renderSettings();
+}
 async function renderSettings() {
-  const s = await api("/api/settings");
+  const [s, vp] = await Promise.all([api("/api/settings"), api("/api/vpn")]);
+  renderVpnBtn(vp);
   const v = s.vyro, c = s.clip;
   $("#tab-settings").innerHTML = `
     <h1>Settings</h1>
@@ -636,15 +687,42 @@ async function renderSettings() {
           <label class="check"><input type="checkbox" id="darkTheme" ${localStorage.theme === "dark" ? "checked" : ""}> Dark theme</label>
         </div>
       </div>
-      <div class="card">
-        <div class="card-head"><h2>VPN guard</h2><span id="vpnNow">${vpnChip(STATE.overview && STATE.overview.vpn, s.network.vpn_required)}</span></div>
-        <p class="muted" style="margin-top:0">Apna VPN app (NordVPN, ProtonVPN, Surfshark…) PC pe ON rakho. Ye guard sirf check karta hai ki internet kis country se aa raha hai.
-          VPN band ho jaye to bot Vyro aur posting rok deta hai (clips bante rehte hain), aur VPN wapas aate hi khud chalu ho jata hai.</p>
-        <label class="check"><input type="checkbox" name="vpn_required" ${s.network.vpn_required ? "checked" : ""}> VPN guard ON (sirf in countries se chalo)</label>
-        <div class="form-grid">
-          <label class="field"><span>Allowed countries (code, comma se)</span><input type="text" name="allowed_countries" value="${esc(s.network.allowed_countries.join(", "))}" placeholder="US, GB, CA, AU"><div class="hint">US = United States, GB = UK, CA = Canada, AU = Australia</div></label>
-          <div class="field"><span class="muted" style="display:block;font-size:12.5px;font-weight:600;margin-bottom:5px">Abhi ka internet</span><button type="button" onclick="checkVpn()">⟳ Check karo</button></div>
+      <div class="card" id="vpnCard">
+        <div class="card-head"><h2>VPN (built-in)</h2>${vpnStateChip(vp)}</div>
+        <div class="vpn-hero">
+          <div style="flex:1">
+            <div class="big">${vp.wanted && vp.state === "on" ? `Connected · ${esc(vp.country || "?")}` : vp.wanted ? (vp.state === "error" ? "Connect nahi hua" : "Connecting…") : "VPN OFF"}</div>
+            <small>${vp.wanted ? `${esc(vp.config)}${vp.ip ? " · " + esc(vp.ip) : ""}${vp.error ? " · " + esc(vp.error) : ""}` : "Rare Cash ka saara kaam (Vyro, upload, views) VPN se jayega. Baaki PC normal rahega."}</small>
+          </div>
+          <button type="button" class="${vp.wanted ? "" : "primary"}" onclick="$('#vpnBtn').click()">${vp.wanted ? "Disconnect" : "Connect"}</button>
         </div>
+        <div class="grid two">
+          <div>
+            <h2 style="margin-bottom:8px">Servers</h2>
+            ${vp.configs.length ? vp.configs.map((c) => `<div class="server">
+                <span class="flag">${esc(c.name.slice(0, 2).toUpperCase())}</span>
+                <div class="info"><b>${esc(c.name)}</b><small>${esc(c.endpoint)}</small></div>
+                ${vp.selected === c.name && vp.wanted ? chip("good", "●", "active") : `<button type="button" class="small" onclick="vpnUse('${esc(c.name)}')">Connect</button>`}
+                <button type="button" class="small danger" onclick="vpnDelete('${esc(c.name)}')">✕</button></div>`).join("")
+              : `<div class="empty" style="padding:16px"><b>Koi server nahi</b>Apne VPN provider se WireGuard <code>.conf</code> file laao aur add karo.</div>`}
+            <div class="hint" style="margin-top:8px">VPN engine: ${vp.engine_installed ? "✓ ready" : "pehli baar Connect pe apne aap download hoga (~5 MB)"}</div>
+          </div>
+          <div>
+            <h2 style="margin-bottom:8px">Server add karo</h2>
+            <label class="field"><span>Naam (jaise us-newyork)</span><input type="text" id="vpnName" placeholder="us-server"></label>
+            <label class="field"><span>WireGuard .conf file</span><input type="file" id="vpnFile" accept=".conf,text/plain"></label>
+            <label class="field"><span>…ya config yahan paste karo</span><textarea id="vpnText" rows="4" placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = ..."></textarea></label>
+            <button type="button" class="blue" onclick="vpnAdd()">＋ Server save karo</button>
+            <div class="hint">Config sirf tumhare PC pe <code>vpn/configs</code> mein save hoti hai.</div>
+          </div>
+        </div>
+        <fieldset style="margin-top:16px"><legend>VPN guard</legend>
+          <label class="check"><input type="checkbox" name="vpn_required" ${s.network.vpn_required ? "checked" : ""}> Sirf in countries se kaam karo (warna Vyro/posting roko)</label>
+          <div class="form-grid">
+            <label class="field"><span>Allowed countries</span><input type="text" name="allowed_countries" value="${esc(s.network.allowed_countries.join(", "))}" placeholder="US, GB, CA, AU"><div class="hint">US = United States, GB = UK, CA = Canada, AU = Australia</div></label>
+            <div class="field"><span class="muted" style="display:block;font-size:12.5px;font-weight:600;margin-bottom:5px">Abhi ka internet <span id="vpnNow">${vpnChip(STATE.overview && STATE.overview.vpn, s.network.vpn_required)}</span></span><button type="button" onclick="checkVpn()">⟳ Check karo</button></div>
+          </div>
+        </fieldset>
       </div>
       <div><button class="primary" type="submit">Save settings</button></div>
     </form>`;

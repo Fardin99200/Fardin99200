@@ -26,7 +26,7 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-from clipper import instagram, network, pipeline, uploader, vyro
+from clipper import instagram, network, pipeline, uploader, vpn, vyro
 from clipper.botconfig import BotConfig, Page
 from clipper.browser_agent import Browser
 from clipper.config import Campaign
@@ -351,8 +351,16 @@ def setup_youtube(cfg: BotConfig, only_page: str | None = None) -> None:
 NEEDS_VPN = {"scan", "post_due", "submit_due"}
 
 
+def vpn_wanted(st: State) -> bool:
+    return st.get("vpn_on") == "1"
+
+
 def vpn_check(cfg: BotConfig, st: State) -> bool:
-    v = network.vpn_status(cfg.network.allowed_countries, cfg.network.vpn_required)
+    if vpn_wanted(st) and vpn.tunnel.status()["state"] != "on":
+        st.set("vpn", json.dumps({"pass": False, "country_name": "VPN connect nahi", "country": "",
+                                  "required": True, "ip": ""}))
+        return False
+    v = network.vpn_status(cfg.network.allowed_countries, cfg.network.vpn_required or vpn_wanted(st))
     st.set("vpn", json.dumps(v))
     return v["pass"]
 
@@ -391,7 +399,11 @@ def run_forever(stop: threading.Event | None = None, once: bool = False) -> None
     stop = stop or threading.Event()
     st = State("bot.db")
     log.info("Rare Cash bot engine started")
+    last_vpn = 0.0
     while not stop.is_set():
+        if time.time() - last_vpn > 20:  # keep the built-in VPN up while it's switched ON
+            vpn.tunnel.watchdog(vpn_wanted(st), st.get("vpn_config", ""))
+            last_vpn = time.time()
         try:
             cfg = BotConfig.load(CONFIG)
         except Exception as e:

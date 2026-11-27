@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import bot
-from clipper import network
+from clipper import network, vpn
 from clipper.botconfig import BotConfig, Page
 from clipper.state import State
 
@@ -50,9 +50,13 @@ def start_engine() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    st = State("bot.db")
+    if st.get("vpn_on") == "1" and st.get("vpn_config"):
+        threading.Thread(target=lambda: vpn.tunnel.watchdog(True, st.get("vpn_config")), daemon=True).start()
     start_engine()
     yield
     engine_stop.set()
+    vpn.tunnel.stop(clear_env=False)
 
 
 app = FastAPI(title="Rare Cash", lifespan=lifespan)
@@ -144,9 +148,12 @@ def warnings(c: BotConfig, st: State) -> list[dict]:
         add("critical", "Claude API key nahi hai. Settings mein daalo.", "settings")
     if not shutil.which("ffmpeg"):
         add("critical", "FFmpeg install nahi hai (PowerShell: winget install ffmpeg)", None)
-    vpn = json.loads(st.get("vpn", "{}") or "{}")
-    if c.network.vpn_required and vpn and not vpn.get("pass", True):
-        add("critical", f"VPN band hai: internet {vpn.get('country_name') or 'unknown'} se aa raha hai. "
+    t = vpn.tunnel.status()
+    if st.get("vpn_on") == "1" and t["state"] == "error":
+        add("critical", f"Built-in VPN connect nahi ho raha: {t['error']}. Bot Vyro/posting rok ke rakhega.", "settings")
+    vpn_s = json.loads(st.get("vpn", "{}") or "{}")
+    if c.network.vpn_required and vpn_s and not vpn_s.get("pass", True) and st.get("vpn_on") != "1":
+        add("critical", f"VPN band hai: internet {vpn_s.get('country_name') or 'unknown'} se aa raha hai. "
                         "Vyro aur posting ruki hai. VPN app connect karo.", "settings")
     if not c.pages:
         add("warning", "Abhi koi page nahi hai. Pages mein jaake pehla page add karo.", "pages")
@@ -202,6 +209,7 @@ def overview():
         "activity": log_tail(12),
         "vpn": json.loads(st.get("vpn", "{}") or "{}"),
         "vpn_required": c.network.vpn_required,
+        "tunnel": {**vpn.tunnel.status(), "wanted": st.get("vpn_on") == "1"},
     }
 
 
@@ -234,6 +242,65 @@ def network_check(refresh: bool = False):
 
 class Toggle(BaseModel):
     enabled: bool
+
+
+@app.get("/api/vpn")
+def vpn_get():
+    st = db()
+    return {**vpn.tunnel.status(), "wanted": st.get("vpn_on") == "1", "selected": st.get("vpn_config", ""),
+            "configs": vpn.list_configs()}
+
+
+class VpnIn(BaseModel):
+    enabled: bool
+    config: str = ""
+
+
+@app.post("/api/vpn")
+def vpn_set(body: VpnIn):
+    st = db()
+    if body.enabled:
+        name = body.config or st.get("vpn_config", "") or next((c["name"] for c in vpn.list_configs()), "")
+        if not name:
+            raise HTTPException(400, "Pehle VPN server add karo (Settings → VPN → WireGuard config)")
+        st.set("vpn_config", name)
+        st.set("vpn_on", "1")
+
+        def connect():
+            try:
+                vpn.tunnel.start(name)
+            except Exception:
+                pass  # error is shown in the VPN status
+
+        threading.Thread(target=connect, daemon=True).start()
+        return {"ok": True, "message": "VPN connect ho raha hai…"}
+    st.set("vpn_on", "0")
+    vpn.tunnel.stop()
+    st.set("vpn", "{}")
+    return {"ok": True, "message": "VPN OFF"}
+
+
+class VpnConfigIn(BaseModel):
+    name: str
+    text: str
+
+
+@app.post("/api/vpn/configs")
+def vpn_config_add(body: VpnConfigIn):
+    try:
+        name = vpn.save_config(body.name, body.text)
+    except vpn.VPNError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "name": name, "message": f"Server '{name}' add ho gaya"}
+
+
+@app.delete("/api/vpn/configs/{name}")
+def vpn_config_delete(name: str):
+    st = db()
+    if st.get("vpn_config") == name and st.get("vpn_on") == "1":
+        raise HTTPException(400, "Ye server abhi chal raha hai, pehle VPN OFF karo")
+    vpn.delete_config(name)
+    return {"ok": True}
 
 
 @app.post("/api/bot")

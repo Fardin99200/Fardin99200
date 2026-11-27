@@ -68,9 +68,11 @@ class Browser:
         from playwright.sync_api import sync_playwright
 
         self._pw = sync_playwright().start()
+        proxy = os.getenv("RARECASH_PROXY")  # set while Rare Cash's built-in VPN is ON
         self.ctx = self._pw.chromium.launch_persistent_context(
             self.profile_dir, headless=self.headless, viewport={"width": 1366, "height": 900},
             executable_path=os.getenv("BOT_CHROME_PATH") or None,  # optional: use your own Chrome
+            proxy={"server": proxy, "bypass": "localhost,127.0.0.1"} if proxy else None,
         )
         self.page = self.ctx.pages[0] if self.ctx.pages else self.ctx.new_page()
         return self
