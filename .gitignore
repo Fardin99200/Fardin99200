@@ -12,3 +12,5 @@ bot.db
 tokens/
 browser_profile/
 logs/
+uploads/
+bot.yaml.bak

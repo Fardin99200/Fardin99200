@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rare Cash</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M16 3 28 12 16 29 4 12Z' fill='%2300c37a'/></svg>">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" class="logo" aria-hidden="true">
+        <path d="M16 3 28 12 16 29 4 12Z" fill="var(--accent)"/>
+        <path d="M4 12h24M11 12l5 17 5-17M11 12l5-9 5 9" stroke="var(--accent-ink)" stroke-width="1.4" fill="none" stroke-linejoin="round"/>
+      </svg>
+      <div><b>Rare Cash</b><small>Vyro clipping bot</small></div>
+    </div>
+    <nav id="nav">
+      <a href="#dashboard" data-tab="dashboard"><i>◉</i><span>Dashboard</span></a>
+      <a href="#pages" data-tab="pages"><i>▦</i><span>Pages</span></a>
+      <a href="#add" data-tab="add"><i>＋</i><span>Add Video</span></a>
+      <a href="#campaigns" data-tab="campaigns"><i>⚑</i><span>Campaigns</span></a>
+      <a href="#clips" data-tab="clips"><i>▶</i><span>Clips</span></a>
+      <a href="#schedule" data-tab="schedule"><i>◷</i><span>Schedule</span></a>
+      <a href="#earnings" data-tab="earnings"><i>$</i><span>Earnings</span></a>
+      <a href="#logs" data-tab="logs"><i>≡</i><span>Logs</span></a>
+      <a href="#settings" data-tab="settings"><i>⚙</i><span>Settings</span></a>
+    </nav>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="status-line">
+        <span id="engineDot" class="dot"></span>
+        <span id="statusText">Loading...</span>
+      </div>
+      <label class="power" title="Bot ON / OFF">
+        <input type="checkbox" id="powerToggle">
+        <span class="power-track"><span class="power-knob"></span></span>
+        <b id="powerLabel">...</b>
+      </label>
+    </header>
+
+    <section id="tab-dashboard" class="tab"></section>
+    <section id="tab-pages" class="tab"></section>
+    <section id="tab-add" class="tab"></section>
+    <section id="tab-campaigns" class="tab"></section>
+    <section id="tab-clips" class="tab"></section>
+    <section id="tab-schedule" class="tab"></section>
+    <section id="tab-earnings" class="tab"></section>
+    <section id="tab-logs" class="tab"></section>
+    <section id="tab-settings" class="tab"></section>
+  </main>
+</div>
+
+<div id="modal" class="modal" hidden>
+  <div class="modal-box">
+    <button class="modal-close" aria-label="Close" onclick="closeModal()">×</button>
+    <div id="modalBody"></div>
+  </div>
+</div>
+<div id="toast" class="toast" hidden></div>
+<div id="tooltip" class="tooltip" hidden></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

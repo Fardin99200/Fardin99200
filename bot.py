@@ -1,11 +1,13 @@
-"""24x7 Vyro clipping bot.
+"""Rare Cash bot engine (24x7).
 
 Loop: scan Vyro campaigns -> route to niche pages -> join + read material -> make clips ->
-post on YouTube Shorts / Instagram Reels (rate-limited per page) -> submit post links on Vyro.
+post on YouTube Shorts / Instagram Reels (rate-limited per page) -> submit post links on Vyro ->
+refresh views for analytics.
 
+Usually started by the dashboard (python rarecash.py). Standalone use:
     python bot.py --login          # one time: log in to Vyro in the bot's browser
     python bot.py --setup-youtube  # one time: connect each page's YouTube channel
-    python bot.py                  # run forever
+    python bot.py                  # run forever without the dashboard
     python bot.py --once           # one cycle (for testing)
 """
 from __future__ import annotations
@@ -15,6 +17,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime, timezone
@@ -31,15 +34,24 @@ from clipper.state import State
 
 log = logging.getLogger("bot")
 OUT = Path("output")
+CONFIG = "bot.yaml"
+STATS_EVERY_HOURS = 2
 
 
 def setup_logging() -> None:
+    if log.handlers:
+        return
     Path("logs").mkdir(exist_ok=True)
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%Y-%m-%d %H:%M:%S")
     for h in (logging.StreamHandler(sys.stdout), logging.FileHandler("logs/bot.log", encoding="utf-8")):
         h.setFormatter(fmt)
         log.addHandler(h)
     log.setLevel(logging.INFO)
+
+
+def status(st: State, text: str) -> None:
+    st.set("status", text)
+    st.set("heartbeat", time.time())
 
 
 def browser(cfg: BotConfig) -> Browser:
@@ -62,44 +74,76 @@ def platform_allowed(platform: str, campaign_platforms: list[str]) -> bool:
     return any(any(n in p.lower() for n in names[platform]) for p in campaign_platforms)
 
 
+def is_manual(campaign_url: str) -> bool:
+    return campaign_url.startswith("manual:")
+
+
 # ---------------------------------------------------------------- 1. scan
 
 def scan(cfg: BotConfig, st: State) -> None:
+    active = cfg.model_copy(update={"pages": [p for p in cfg.pages if p.enabled]})
+    pending = st.campaigns("pending")  # Vyro links you added in the dashboard
+    if not active.pages and not pending:
+        return
+    status(st, "Vyro pe naye campaigns dhundh raha hai")
     log.info("Scanning Vyro campaigns...")
     with browser(cfg) as b:
-        found = vyro.scan_campaigns(b, cfg)
+        for row in pending:
+            read_campaign(b, cfg, st, row["url"], row["title"] or "", json.loads(row["data"]), row["page"], active)
+
+        if not active.pages:
+            return
+        found = vyro.scan_campaigns(b, active)
         log.info(f"  {len(found)} campaigns on Vyro")
         new = [c for c in found if c.get("url") and not st.campaign_known(c["url"])]
         if not new:
             return
-        routes = {r.url: r for r in vyro.route_campaigns(new, cfg)}
+        routes = {r.url: r for r in vyro.route_campaigns(new, active)}
         accepted = 0
         for c in new:
             r = routes.get(c["url"])
-            page = r.page if r and cfg.page(r.page) else ""
-            cpm_ok = r is None or r.cpm_usd is None or r.cpm_usd >= cfg.vyro.min_cpm_usd
+            page = r.page if r and active.page(r.page) else ""
+            c["cpm_usd"] = r.cpm_usd if r else None
+            cpm_ok = c["cpm_usd"] is None or c["cpm_usd"] >= cfg.vyro.min_cpm_usd
             usable = page and cpm_ok and any(platform_allowed(p, c.get("platforms") or [])
-                                             for p in page_platforms(cfg.page(page)))
-            if not usable or accepted >= cfg.vyro.max_new_campaigns_per_scan:
-                # leave over-limit campaigns unknown so a later scan can pick them up
-                if not usable:
-                    st.add_campaign(c["url"], c.get("title", ""), c, "", "skipped")
-                    log.info(f"  skip: {c.get('title')} ({r.reason if r else 'no route'})")
+                                             for p in page_platforms(active.page(page)))
+            if not usable:
+                st.add_campaign(c["url"], c.get("title", ""), {**c, "skip_reason": r.reason if r else "no match"}, "", "skipped")
+                log.info(f"  skip: {c.get('title')} ({r.reason if r else 'no route'})")
                 continue
-            try:
-                details = vyro.campaign_details(b, cfg, c["url"])
-            except vyro.LoginRequired:
-                raise
-            except Exception as e:
-                log.warning(f"  could not open {c.get('title')}: {e}")
-                continue
-            if not details.get("active", True) or not details.get("material_links"):
-                st.add_campaign(c["url"], c.get("title", ""), {**c, **details}, "", "skipped")
-                log.info(f"  skip (inactive/no material): {c.get('title')}")
-                continue
-            st.add_campaign(c["url"], c.get("title", ""), {**c, **details}, page, "ready")
-            accepted += 1
-            log.info(f"  + {c.get('title')} -> page '{page}' ({len(details['material_links'])} links)")
+            if accepted >= cfg.vyro.max_new_campaigns_per_scan:
+                continue  # left unknown, so the next scan picks it up
+            if read_campaign(b, cfg, st, c["url"], c.get("title", ""), c, page):
+                accepted += 1
+
+
+def read_campaign(b: Browser, cfg: BotConfig, st: State, url: str, title: str, data: dict, page: str,
+                  active: BotConfig | None = None) -> bool:
+    try:
+        details = vyro.campaign_details(b, cfg, url)
+    except vyro.LoginRequired:
+        raise
+    except Exception as e:
+        log.warning(f"  could not open {title or url}: {e}")
+        if st.campaign_known(url):
+            st.update_campaign(url, status="failed", error=str(e)[:500])
+        return False
+    merged = {**data, **details}
+    merged["material_links"] = list(dict.fromkeys(data.get("material_links", []) + details.get("material_links", [])))
+    if not page and active and active.pages:  # added from the dashboard without choosing a page
+        summary = {"url": url, "title": title, "platforms": merged.get("platforms", []),
+                   "summary": (merged.get("rules") or "")[:800]}
+        r = next(iter(vyro.route_campaigns([summary], active)), None)
+        page = r.page if r and active.page(r.page) else ""
+        merged["cpm_usd"] = r.cpm_usd if r else None
+    ok = details.get("active", True) and merged["material_links"] and page
+    new_status = "ready" if ok else "skipped"
+    if st.campaign_known(url):
+        st.update_campaign(url, data=merged, page=page or "", status=new_status, title=title or details.get("title", ""))
+    else:
+        st.add_campaign(url, title, merged, page if ok else "", new_status)
+    log.info(f"  {'+' if ok else 'skip'} {title or url} -> page '{page}' ({len(merged['material_links'])} links)")
+    return bool(ok)
 
 
 # ---------------------------------------------------------------- 2. clips
@@ -121,18 +165,16 @@ def campaign_settings(cfg: BotConfig, page: Page, data: dict) -> Campaign:
 
 def make_clips(cfg: BotConfig, st: State) -> None:
     """Process one ready campaign per cycle so posting keeps flowing."""
-    ready = st.campaigns("ready")
+    ready = [r for r in st.campaigns("ready") if (cfg.page(r["page"]) and cfg.page(r["page"]).enabled)]
     if not ready:
         return
     row = ready[0]
     data, page = json.loads(row["data"]), cfg.page(row["page"])
-    if page is None:
-        st.update_campaign(row["url"], status="skipped", error="page removed from bot.yaml")
-        return
     c = campaign_settings(cfg, page, data)
     log.info(f"Making clips for '{row['title']}' (page {page.name})")
     links = [u for u in data.get("material_links", []) if not st.material_done(u, row["url"])]
     for link in links[: cfg.vyro.max_materials_per_campaign]:
+        status(st, f"Clips bana raha hai: {row['title'][:60]}")
         try:
             source = link
             host = (urlparse(link).hostname or "").lower()
@@ -156,25 +198,38 @@ def make_clips(cfg: BotConfig, st: State) -> None:
 
 # ---------------------------------------------------------------- 3. post
 
+def next_slot(st: State, page: Page, platform: str) -> tuple[float, int, int]:
+    """(epoch seconds when the next post is allowed, posts in last 24h, daily limit)."""
+    limit = page.youtube.max_per_day if platform == "youtube" else page.instagram.max_per_day
+    recent = st.posts_since(page.name, platform, 24)
+    t = time.time()
+    if recent:
+        last = datetime.fromisoformat(recent[0]["posted_at"]).timestamp()
+        t = max(t, last + page.min_gap_minutes * 60)
+    if len(recent) >= limit:
+        oldest = datetime.fromisoformat(recent[limit - 1]["posted_at"]).timestamp()
+        t = max(t, oldest + 24 * 3600)
+    return t, len(recent), limit
+
+
 def post_due(cfg: BotConfig, st: State) -> None:
     for page in cfg.pages:
+        if not page.enabled:
+            continue
         for platform in page_platforms(page):
-            limit = page.youtube.max_per_day if platform == "youtube" else page.instagram.max_per_day
-            recent = st.posts_since(page.name, platform, 24)
-            if len(recent) >= limit:
+            when, _, _ = next_slot(st, page, platform)
+            if when > time.time():
                 continue
-            if recent:
-                last = datetime.fromisoformat(recent[0]["posted_at"])
-                if (datetime.now(timezone.utc) - last).total_seconds() < page.min_gap_minutes * 60:
-                    continue
             clip = pick_clip(st, page.name, platform)
             if clip is None:
                 continue
             meta = json.loads(clip["meta"])
+            status(st, f"Post kar raha hai: {page.name} / {platform}")
             log.info(f"Posting to {page.name}/{platform}: {meta['title']}")
             try:
-                url = publish(page, platform, meta)
-                st.record_post(clip["id"], platform, page.name, url, None)
+                url, pid = publish(page, platform, meta)
+                st.record_post(clip["id"], platform, page.name, url, None, pid,
+                               "not_needed" if is_manual(clip["campaign_url"]) else None)
                 log.info(f"  -> {url}")
             except Exception as e:
                 st.record_post(clip["id"], platform, page.name, None, str(e)[:500])
@@ -182,12 +237,8 @@ def post_due(cfg: BotConfig, st: State) -> None:
 
 
 def pick_clip(st: State, page: str, platform: str):
-    for _ in range(20):
-        clip = st.next_clip_to_post(page, platform)
-        if clip is None:
-            return None
-        camp = st.db.execute("SELECT data FROM campaigns WHERE url=?", (clip["campaign_url"],)).fetchone()
-        platforms = json.loads(camp["data"]).get("platforms", []) if camp else []
+    for clip in st.queue(page, platform):
+        platforms = st.campaign_data(clip["campaign_url"]).get("platforms", [])
         if platform_allowed(platform, platforms) and Path(clip["path"]).exists():
             return clip
         # not allowed for this platform: mark so we don't pick it again
@@ -198,12 +249,14 @@ def pick_clip(st: State, page: str, platform: str):
     return None
 
 
-def publish(page: Page, platform: str, meta: dict) -> str:
+def publish(page: Page, platform: str, meta: dict) -> tuple[str, str]:
+    """Returns (public url, platform's own id)."""
     path = Path(meta["path"])
     if platform == "youtube":
         y = page.youtube
-        return uploader.upload_short(path, meta["title"], meta["final_description"], meta["hashtags"],
-                                     y.privacy, y.token_file, y.client_secret)
+        url = uploader.upload_short(path, meta["title"], meta["final_description"], meta["hashtags"],
+                                    y.privacy, y.token_file, y.client_secret)
+        return url, uploader.video_id(url)
     ig = page.instagram
     caption = f"{meta['title']}\n\n{meta['final_description']}"
     return instagram.post_reel(path, caption, ig.user_id, os.getenv(ig.token_env, ""), ig.graph_version)
@@ -212,9 +265,10 @@ def publish(page: Page, platform: str, meta: dict) -> str:
 # ---------------------------------------------------------------- 4. submit
 
 def submit_due(cfg: BotConfig, st: State) -> None:
-    todo = st.posts_to_submit()
+    todo = [p for p in st.posts_to_submit() if not is_manual(p["campaign_url"])]
     if not todo:
         return
+    status(st, f"Vyro pe {len(todo)} links submit kar raha hai")
     log.info(f"Submitting {len(todo)} posts on Vyro...")
     with browser(cfg) as b:
         for p in todo:
@@ -231,69 +285,146 @@ def submit_due(cfg: BotConfig, st: State) -> None:
                 log.warning(f"  submit error {p['url']}: {e}")
 
 
-# ---------------------------------------------------------------- main
+# ---------------------------------------------------------------- 5. analytics
 
-def login(cfg: BotConfig) -> None:
-    with Browser(cfg.vyro.profile_dir, cfg.vyro.allowed_domains, headless=False) as b:
-        b.page.goto(cfg.vyro.start_url)
-        input("\nBrowser mein Vyro pe login karo. Login ho jaye to yahan ENTER dabao... ")
-    print("Login saved in", cfg.vyro.profile_dir)
-
-
-def setup_youtube(cfg: BotConfig) -> None:
+def refresh_stats(cfg: BotConfig, st: State) -> None:
+    if time.time() - float(st.get("last_stats", "0")) < STATS_EVERY_HOURS * 3600:
+        return
+    st.set("last_stats", time.time())
+    posts = st.posts_for_stats()
+    if not posts:
+        return
+    status(st, "Views update kar raha hai")
     for page in cfg.pages:
-        if page.youtube and page.youtube.enabled:
+        mine = [p for p in posts if p["page"] == page.name]
+        yt = [p for p in mine if p["platform"] == "youtube"]
+        if yt and page.youtube:
+            try:
+                stats = uploader.get_stats([p["platform_id"] for p in yt], page.youtube.token_file,
+                                           page.youtube.client_secret)
+                for p in yt:
+                    if p["platform_id"] in stats:
+                        st.record_stats(p["clip_id"], "youtube", *stats[p["platform_id"]])
+            except Exception as e:
+                log.warning(f"YouTube stats failed for {page.name}: {e}")
+        if page.instagram:
+            token = os.getenv(page.instagram.token_env, "")
+            for p in (p for p in mine if p["platform"] == "instagram"):
+                try:
+                    st.record_stats(p["clip_id"], "instagram",
+                                    *instagram.get_stats(p["platform_id"], token, page.instagram.graph_version))
+                except Exception as e:
+                    log.warning(f"Instagram stats failed for {p['url']}: {e}")
+
+
+# ---------------------------------------------------------------- control
+
+def login(cfg: BotConfig, st: State | None = None) -> None:
+    """Open the bot's browser on Vyro; the login is saved when you close the window."""
+    if st:
+        status(st, "Vyro login window khuli hai: login karke window band karo")
+    print("Browser mein Vyro pe login karo, phir browser window band kar do.")
+    try:
+        with Browser(cfg.vyro.profile_dir, cfg.vyro.allowed_domains, headless=False) as b:
+            b.page.goto(cfg.vyro.start_url)
+            b.ctx.wait_for_event("close", timeout=0)
+    except Exception as e:
+        if "closed" not in str(e).lower():
+            raise
+    st = st or State("bot.db")
+    st.set("login_ok_at", time.time())
+    st.set("login_required", "0")
+    log.info("Vyro login saved")
+
+
+def setup_youtube(cfg: BotConfig, only_page: str | None = None) -> None:
+    for page in cfg.pages:
+        if page.youtube and page.youtube.enabled and (only_page is None or page.name == only_page):
             print(f"\n== {page.name}: is page ka YouTube channel choose karo")
             uploader._service(Path(page.youtube.token_file), Path(page.youtube.client_secret))
-    print("YouTube connected for all pages.")
 
 
-def cycle(cfg: BotConfig, st: State, last_scan: float) -> float:
-    steps = [make_clips, post_due, submit_due]
-    if time.time() - last_scan >= cfg.vyro.scan_every_hours * 3600:
+def cycle(cfg: BotConfig, st: State) -> None:
+    steps = [make_clips, post_due, submit_due, refresh_stats]
+    if time.time() - float(st.get("last_scan", "0")) >= cfg.vyro.scan_every_hours * 3600 or st.campaigns("pending"):
         steps.insert(0, scan)
-        last_scan = time.time()
+        st.set("last_scan", time.time())
     for step in steps:
         try:
             step(cfg, st)
         except vyro.LoginRequired as e:
             # clipping + posting keep running; only Vyro steps wait for a new login
+            st.set("login_required", "1")
             log.error(f"{step.__name__}: {e}")
         except Exception:
             log.error(f"{step.__name__} crashed:\n{traceback.format_exc()}")
+    st.set("last_cycle", time.time())
     log.info(f"Status: {st.summary()}")
-    return last_scan
+
+
+def run_forever(stop: threading.Event | None = None, once: bool = False) -> None:
+    """Main loop. Reads on/off, run-now and login requests from the dashboard via the DB."""
+    setup_logging()
+    stop = stop or threading.Event()
+    st = State("bot.db")
+    log.info("Rare Cash bot engine started")
+    while not stop.is_set():
+        try:
+            cfg = BotConfig.load(CONFIG)
+        except Exception as e:
+            status(st, f"bot.yaml mein galti hai: {e}")
+            stop.wait(30)
+            continue
+
+        if st.get("login_request") == "1":
+            st.set("login_request", "0")
+            try:
+                login(cfg, st)
+                st.set("login_required", "0")
+            except Exception as e:
+                log.error(f"Login failed: {e}")
+
+        if st.get("enabled", "1") == "1" or st.get("run_now") == "1" or once:
+            st.set("run_now", "0")
+            try:
+                cycle(cfg, st)
+            except Exception:
+                log.error(f"Cycle crashed:\n{traceback.format_exc()}")
+            if once:
+                return
+            wake = time.time() + cfg.loop_minutes * 60
+            status(st, f"Aaram: agla round {datetime.fromtimestamp(wake).strftime('%H:%M')} pe")
+        else:
+            wake = time.time() + 5
+            status(st, "Bot OFF hai")
+
+        while time.time() < wake and not stop.is_set():
+            if st.get("run_now") == "1" or st.get("login_request") == "1":
+                break
+            if st.get("enabled", "1") == "0" and not st.get("status", "").startswith("Bot OFF"):
+                status(st, "Bot OFF hai")
+            st.set("heartbeat", time.time())
+            stop.wait(2)
 
 
 def main() -> int:
     load_dotenv()
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="bot.yaml")
     ap.add_argument("--login", action="store_true")
     ap.add_argument("--setup-youtube", action="store_true")
     ap.add_argument("--once", action="store_true", help="run one cycle and exit")
     args = ap.parse_args()
 
-    cfg = BotConfig.load(args.config)
+    cfg = BotConfig.load(CONFIG)
     if args.login:
         login(cfg)
         return 0
     if args.setup_youtube:
         setup_youtube(cfg)
         return 0
+    run_forever(once=args.once)
+    return 0
 
-    setup_logging()
-    st = State("bot.db")
-    log.info(f"Bot started with {len(cfg.pages)} pages: {', '.join(p.name for p in cfg.pages)}")
-    last_scan = 0.0
-    while True:
-        try:
-            last_scan = cycle(cfg, st, last_scan)
-        except Exception:
-            log.error(f"Cycle crashed:\n{traceback.format_exc()}")
-        if args.once:
-            return 0
-        time.sleep(cfg.loop_minutes * 60)
 
 if __name__ == "__main__":
     sys.exit(main())

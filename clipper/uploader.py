@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"]
 CLIENT_SECRET = Path("client_secret.json")
 TOKEN = Path("token.json")
 
@@ -59,3 +59,19 @@ def upload_short(file: Path, title: str, description: str, tags: list[str], priv
             print(f"\r  Uploading {int(status.progress() * 100)}%", end="", flush=True)
     print()
     return f"https://youtube.com/shorts/{response['id']}"
+
+
+def video_id(url: str) -> str:
+    return url.rstrip("/").split("/")[-1].split("?")[0]
+
+
+def get_stats(ids: list[str], token_file: str | Path = TOKEN, client_secret: str | Path = CLIENT_SECRET) -> dict:
+    """{video_id: (views, likes)} for up to 50 ids per call."""
+    yt = _service(token_file, client_secret)
+    out = {}
+    for i in range(0, len(ids), 50):
+        resp = yt.videos().list(part="statistics", id=",".join(ids[i:i + 50])).execute()
+        for item in resp.get("items", []):
+            st = item.get("statistics", {})
+            out[item["id"]] = (int(st.get("viewCount", 0)), int(st.get("likeCount", 0)))
+    return out

@@ -10,3 +10,6 @@ google-auth-oauthlib
 gdown
 playwright
 requests
+fastapi
+uvicorn
+python-multipart

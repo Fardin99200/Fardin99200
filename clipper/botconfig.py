@@ -42,6 +42,7 @@ class InstagramSettings(Strict):
 class Page(Strict):
     name: str
     niche: str
+    enabled: bool = True
     language: str = "English"
     clips_per_video: int = 4
     min_gap_minutes: int = 120
@@ -53,12 +54,24 @@ class Page(Strict):
 class BotConfig(Strict):
     vyro: VyroSettings = Field(default_factory=VyroSettings)
     loop_minutes: int = 10
-    pages: list[Page]
+    pages: list[Page] = []
     clip_defaults: dict = {}  # any Campaign field (crop_mode, whisper_model, captions, ...)
 
     @classmethod
     def load(cls, path: str | Path = "bot.yaml") -> "BotConfig":
-        return cls(**(yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}))
+        path = Path(path)
+        if not path.exists():
+            return cls()
+        return cls(**(yaml.safe_load(path.read_text(encoding="utf-8")) or {}))
+
+    def save(self, path: str | Path = "bot.yaml") -> None:
+        path = Path(path)
+        if path.exists() and not path.with_suffix(".yaml.bak").exists():
+            path.with_suffix(".yaml.bak").write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        data = self.model_dump(exclude_none=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        tmp.replace(path)
 
     def page(self, name: str) -> Page | None:
         return next((p for p in self.pages if p.name == name), None)
