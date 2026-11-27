@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -17,6 +18,31 @@ import webbrowser
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# ---- where things live --------------------------------------------------------------
+# Source checkout: everything sits next to this file.
+# RareCash.exe (PyInstaller): bundled files (web UI, ffmpeg, VPN engine, browser) are in
+# sys._MEIPASS; your data (bot.db, bot.yaml, .env, clips, VPN configs) sits next to the exe.
+if getattr(sys, "frozen", False):
+    for stream in (sys.stdout, sys.stderr):  # Windows console can't print every character
+        try:
+            stream.reconfigure(errors="replace")
+        except Exception:
+            pass
+    APP_DIR = Path(sys.executable).parent.resolve()
+    RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR)).resolve()
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")  # chromium is bundled inside the package
+    for tool_dir in (RES_DIR / "ffmpeg",):
+        if tool_dir.exists():
+            os.environ["PATH"] = str(tool_dir) + os.pathsep + os.environ.get("PATH", "")
+    if (RES_DIR / "vpn_bin" / "wireproxy.exe").exists():
+        os.environ.setdefault("RARECASH_WIREPROXY", str(RES_DIR / "vpn_bin" / "wireproxy.exe"))
+else:
+    APP_DIR = RES_DIR = Path(__file__).parent.resolve()
+os.chdir(APP_DIR)
+for example, target in (("bot.example.yaml", "bot.example.yaml"), (".env.example", ".env")):
+    if not (APP_DIR / target).exists() and (RES_DIR / example).exists():
+        shutil.copyfile(RES_DIR / example, APP_DIR / target)
 
 from dotenv import load_dotenv, set_key
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -29,10 +55,9 @@ from clipper import network, vpn
 from clipper.botconfig import BotConfig, Page
 from clipper.state import State
 
-ROOT = Path(__file__).parent.resolve()
-os.chdir(ROOT)
-ENV_FILE = ROOT / ".env"
-WEB = ROOT / "web"
+ROOT = APP_DIR
+ENV_FILE = APP_DIR / ".env"
+WEB = RES_DIR / "web"
 DEFAULT_CPM = 3.0  # $ per 1000 views when a campaign's rate is unknown
 
 engine_stop = threading.Event()
@@ -706,6 +731,90 @@ def settings_save(body: SettingsIn):
     return {"ok": True}
 
 
+def selftest() -> int:
+    """Used by the Windows build to prove the packaged exe works. Prints one line per check."""
+    results = []
+
+    def check(name, fn):
+        try:
+            detail = fn()
+            results.append(True)
+            print(f"  OK    {name}" + (f"  ({detail})" if detail else ""))
+        except Exception as e:
+            results.append(False)
+            print(f"  FAIL  {name}: {type(e).__name__}: {e}")
+
+    def ffmpeg():
+        out = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True, check=True).stdout
+        subprocess.run(["ffprobe", "-version"], capture_output=True, check=True)
+        return out.split("\n")[0][:60]
+
+    def render():
+        import tempfile
+        from clipper import render as r
+        from clipper.config import Campaign
+        d = Path(tempfile.mkdtemp())
+        src = d / "src.mp4"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
+                        "-f", "lavfi", "-i", "sine", "-t", "3", "-c:v", "libx264", "-c:a", "aac", "-shortest", str(src)],
+                       check=True)
+        words = [{"start": 0.2 + i * 0.4, "end": 0.5 + i * 0.4, "word": w} for i, w in enumerate("rare cash test ok".split())]
+        out = r.render_clip(src, 0, 2.5, [{"start": 0, "end": 2, "text": "", "words": words}], d / "clip.mp4",
+                            Campaign(crop_mode="face"))
+        w, h, _ = r.probe(out)
+        assert (w, h) == (1080, 1920), (w, h)
+        return f"{w}x{h} with captions"
+
+    def whisper():
+        import faster_whisper  # noqa: F401
+        import ctranslate2
+        return f"ctranslate2 {ctranslate2.__version__}"
+
+    def opencv():
+        import cv2
+        c = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        assert not c.empty(), "face model missing"
+        return cv2.__version__
+
+    def browser():
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            b = p.chromium.launch(headless=True)
+            pg = b.new_page()
+            pg.set_content("<title>ok</title>")
+            t = pg.title()
+            b.close()
+        assert t == "ok"
+        return "chromium launches"
+
+    def youtube_api():
+        from googleapiclient.discovery import build
+        build("youtube", "v3", developerKey="selftest", static_discovery=True)
+        return "discovery docs bundled"
+
+    def vpn_engine():
+        exe = vpn.binary_path()
+        assert exe.exists(), f"{exe} missing"
+        out = subprocess.run([str(exe), "--version"], capture_output=True, text=True, timeout=20)
+        return (out.stdout or out.stderr).strip()[:40]
+
+    def web_ui():
+        assert (WEB / "index.html").exists() and (WEB / "app.js").exists()
+        from fastapi.testclient import TestClient
+        with TestClient(app) as client:
+            assert client.get("/").status_code == 200
+            assert client.get("/api/overview").status_code == 200
+        engine_stop.set()
+        return "dashboard + API respond"
+
+    print("Rare Cash self-test")
+    for name, fn in [("ffmpeg", ffmpeg), ("video render", render), ("whisper", whisper), ("opencv face", opencv),
+                     ("browser", browser), ("youtube api", youtube_api), ("vpn engine", vpn_engine), ("dashboard", web_ui)]:
+        check(name, fn)
+    print("ALL OK" if all(results) else "SOME CHECKS FAILED")
+    return 0 if all(results) else 1
+
+
 def main() -> None:
     import uvicorn
 
@@ -713,7 +822,10 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--selftest", action="store_true", help="check that every part works, then exit")
     args = ap.parse_args()
+    if args.selftest:
+        sys.exit(selftest())
     url = f"http://localhost:{args.port}"
     print(f"\n  Rare Cash dashboard: {url}\n  (band karne ke liye ye window band karo ya Ctrl+C)\n")
     if not args.no_browser:
