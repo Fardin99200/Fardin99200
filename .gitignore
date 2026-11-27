@@ -1,0 +1,17 @@
+.env
+client_secret*.json
+token.json
+output/
+downloads/
+__pycache__/
+*.pyc
+.venv/
+campaign.yaml
+bot.yaml
+bot.db
+tokens/
+browser_profile/
+logs/
+uploads/
+bot.yaml.bak
+vpn/

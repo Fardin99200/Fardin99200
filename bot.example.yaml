@@ -1,0 +1,75 @@
+# Copy this file to bot.yaml and fill in your details.
+
+vyro:
+  start_url: "https://app.vyro.com"   # Vyro app (login ke baad campaigns yahin dikhte hain)
+  allowed_domains: ["vyro.com"]   # bot sirf in websites pe jayega
+  headless: false                 # true = browser window chhupi rahegi
+  scan_every_hours: 3             # har 3 ghante mein naye campaigns dekhega
+  max_new_campaigns_per_scan: 5
+  max_materials_per_campaign: 2   # ek campaign ki kitni source videos clip karni hain
+  min_cpm_usd: 0                  # is se kam pay ($ per 1000 views) wale campaigns skip
+  agent_max_steps: 30
+
+# VPN guard: apna VPN app ON rakho. Internet in countries se na aa raha ho to
+# bot Vyro + posting rok deta hai (clips bante rehte hain).
+network:
+  vpn_required: false
+  allowed_countries: ["US", "GB", "CA", "AU"]
+
+loop_minutes: 10                  # har 10 minute mein post/submit check
+
+# Settings for every clip (any field from campaign.example.yaml)
+clip_defaults:
+  crop_mode: face
+  captions: true
+  whisper_model: small
+  min_seconds: 20
+  max_seconds: 60
+
+# Ek entry = ek page (har page ka apna YouTube channel + Instagram account)
+pages:
+  - name: podcast
+    niche: "Podcasts, interviews, motivational speeches, self-improvement"
+    language: English
+    clips_per_video: 4
+    min_gap_minutes: 120          # same page pe do posts ke beech kam se kam itna gap
+    handles: ["@your_podcast_page"]
+    youtube:
+      token_file: tokens/youtube_podcast.json
+      client_secret: client_secret.json
+      privacy: public
+      max_per_day: 3
+    instagram:
+      user_id: "17841400000000000"   # Instagram Business account ID
+      token_env: IG_TOKEN_PODCAST     # token .env file mein is naam se
+      max_per_day: 3
+
+  - name: gaming
+    niche: "Gaming, streamers, Twitch/Kick/YouTube gaming streams"
+    language: English
+    handles: ["@your_gaming_page"]
+    youtube:
+      token_file: tokens/youtube_gaming.json
+    instagram:
+      user_id: "17841400000000001"
+      token_env: IG_TOKEN_GAMING
+
+  - name: comedy
+    niche: "Comedy, entertainment, challenges, vlogs, funny moments"
+    language: English
+    handles: ["@your_comedy_page"]
+    youtube:
+      token_file: tokens/youtube_comedy.json
+    instagram:
+      user_id: "17841400000000002"
+      token_env: IG_TOKEN_COMEDY
+
+  - name: finance
+    niche: "Finance, money, crypto, business, entrepreneurship"
+    language: English
+    handles: ["@your_finance_page"]
+    youtube:
+      token_file: tokens/youtube_finance.json
+    instagram:
+      user_id: "17841400000000003"
+      token_env: IG_TOKEN_FINANCE

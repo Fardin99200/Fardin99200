@@ -1,0 +1,37 @@
+# Is file ko copy karke campaign.yaml banao aur apne Vyro campaign ki details bharo.
+campaign_name: "My Vyro Campaign"
+
+# Vyro campaign page pe jo source videos/links diye hain (YouTube, Google Drive, ya local file path)
+sources:
+  - "https://www.youtube.com/watch?v=XXXXXXXXXXX"
+
+# Vyro campaign ke rules yahan paste karo; Claude inko follow karega
+rules: |
+  - Clip must be about the creator's content only
+  - No profanity in the first 3 seconds
+  - Mention the creator name in the description
+
+language: "English"        # titles/description ki language: English, Hinglish, Hindi...
+
+clips_per_video: 5
+min_seconds: 20
+max_seconds: 60
+
+crop_mode: face            # face = chehre ko center me rakhe | center | blur = poora frame + blurred background
+captions: true
+caption_words_per_line: 3
+caption_font: "Arial"
+caption_font_size: 86
+caption_highlight_color: "FFFF00"   # bolta hua word is color me (RRGGBB)
+caption_uppercase: true
+
+whisper_model: small       # GPU ho to medium/large-v3 behtar; slow PC pe base
+whisper_language: null     # null = auto detect, ya "en", "hi"
+
+upload: true
+privacy: private           # pehle private rakho, quality check karo, phir "public"
+required_hashtags: ["#shorts"]
+description_suffix: ""
+
+model: claude-opus-5-5
+effort: high
