@@ -76,15 +76,11 @@ Dhyan rakho:
 
 ## 1. Install (ek baar, Windows)
 
-1. **Python 3.10+** (https://python.org). Install karte waqt "Add to PATH" tick karna.
-2. **FFmpeg**: PowerShell mein `winget install ffmpeg`
-3. Is folder mein terminal kholo:
-   ```bat
-   python -m venv .venv
-   .venv\Scripts\activate
-   pip install -r requirements.txt
-   playwright install chromium
-   ```
+1. Code download karo: https://github.com/Fardin99200/Fardin99200/archive/refs/heads/claude/happy-goodall-bnoyd8.zip
+   → ZIP pe right-click → **Extract All** (jaise `C:\RareCash` mein)
+2. **Python 3.10+** install karo (https://python.org/downloads). Install screen pe **"Add python.exe to PATH" tick karna**.
+3. Extract kiye folder mein **`RareCash_Setup.bat` double-click** karo. Ye FFmpeg, saare packages aur bot ka browser khud install karta hai (5-10 minute).
+   Windows "protected your PC" bole to **More info → Run anyway**.
 
 ## 2. Rare Cash chalao
 
