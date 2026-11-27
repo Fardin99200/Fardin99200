@@ -51,7 +51,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import bot
-from clipper import network, vpn
+from clipper import browser_agent, network, vpn
 from clipper.botconfig import BotConfig, Page
 from clipper.state import State
 
@@ -182,7 +182,10 @@ def warnings(c: BotConfig, st: State) -> list[dict]:
                         "Vyro aur posting ruki hai. VPN app connect karo.", "settings")
     if not c.pages:
         add("warning", "Abhi koi page nahi hai. Pages mein jaake pehla page add karo.", "pages")
-    if not st.get("login_ok_at"):
+    lc = json.loads(st.get("login_check", "{}") or "{}")
+    if lc.get("ok") is False:
+        add("critical", "Vyro login nahi hua (check fail). Settings → Vyro Login dobara karo.", "settings")
+    elif not st.get("login_ok_at"):
         add("warning", "Vyro login abhi tak nahi hua. Settings → 'Vyro Login' dabao.", "settings")
     if st.get("login_required") == "1":
         add("critical", "Vyro login expire ho gaya. Settings → 'Vyro Login' dabao.", "settings")
@@ -350,11 +353,39 @@ def bot_scan_now():
     return {"ok": True}
 
 
+class LoginIn(BaseModel):
+    mode: str = "bot"   # bot | normal
+    link: str = ""      # login link from Vyro's email (optional)
+
+
 @app.post("/api/vyro/login")
-def vyro_login():
-    db().set("login_request", "1")
+def vyro_login(body: LoginIn | None = None):
+    body = body or LoginIn()
+    link = body.link.strip()
+    if link and not link.startswith("https://"):
+        raise HTTPException(400, "Poora login link paste karo (https:// se shuru hota hai)")
+    st = db()
+    st.set("login_mode", "normal" if body.mode == "normal" else "bot")
+    st.set("login_link", link)
+    st.set("login_done", "0")
+    st.set("login_request", "1")
     start_engine()
-    return {"ok": True, "message": "Thodi der mein browser khulega. Vyro pe login karke window band kar do."}
+    msg = ("Normal browser khulega. Login karke window band karo (ya 'Login ho gaya' dabao)." if body.mode == "normal"
+           else "Thodi der mein browser khulega. Vyro pe login karke window band kar do.")
+    return {"ok": True, "message": msg}
+
+
+@app.post("/api/vyro/login-done")
+def vyro_login_done():
+    db().set("login_done", "1")
+    return {"ok": True, "message": "Theek hai, login save karke check kar raha hoon"}
+
+
+@app.post("/api/vyro/check")
+def vyro_check():
+    db().set("login_verify", "1")
+    start_engine()
+    return {"ok": True, "message": "Login check ho raha hai (10-20 second)"}
 
 
 # ------------------------------------------------------------------ pages
@@ -700,6 +731,8 @@ def settings_get():
         "api_key_set": bool(os.getenv("ANTHROPIC_API_KEY")),
         "client_secret_found": Path("client_secret.json").exists(),
         "vyro_logged_in": bool(db().get("login_ok_at")) and db().get("login_required") != "1",
+        "login_check": json.loads(db().get("login_check", "{}") or "{}"),
+        "system_browser": (browser_agent.system_browser() or ("bundled", ""))[0],
     }
 
 

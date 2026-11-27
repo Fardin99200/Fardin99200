@@ -649,9 +649,25 @@ async function renderSettings() {
       <div class="grid two">
         <div class="card">
           <h2>Vyro</h2>
-          <div class="row" style="margin-bottom:14px">
-            <button type="button" class="primary" onclick="vyroLogin()">🔑 Vyro Login</button>
-            ${s.vyro_logged_in ? chip("good", "✓", "login saved") : chip("critical", "✕", "login nahi hua")}
+          <div class="vpn-hero" style="flex-direction:column;align-items:stretch;gap:10px">
+            <div class="row between">
+              <b>Login: ${loginChip(s)}</b>
+              <button type="button" class="small" onclick="vyroCheck()">⟳ Check karo</button>
+            </div>
+            <div class="row">
+              <button type="button" class="primary" onclick="vyroLogin('bot')">🔑 Vyro Login</button>
+              <button type="button" onclick="vyroLogin('normal')" title="Google sign-in block ho to">🌐 Normal browser se</button>
+              <button type="button" onclick="vyroLoginDone()" title="Normal browser wala login ho gaya">✓ Login ho gaya</button>
+            </div>
+            <div class="hint">
+              <b>Kaise:</b> "Vyro Login" dabao → browser khulega (${s.system_browser === "bundled" ? "bot ka browser" : s.system_browser === "msedge" ? "Microsoft Edge" : "Chrome"}) → app.vyro.com pe email daalo →
+              email mein aaya <b>code</b> wahin daalo, ya email ka <b>login link</b> copy karke neeche paste karo → login hone ke baad <b>window band karo</b>.
+              Google se login block ho to "Normal browser se" try karo. Login ke baad Vyro mein apne YouTube/Instagram accounts bhi connect kar dena.
+            </div>
+            <div class="row" style="flex-wrap:nowrap">
+              <input type="url" id="loginLink" placeholder="Email wala login link yahan paste karo (optional)">
+              <button type="button" onclick="vyroLogin('bot', $('#loginLink').value)">Link kholo</button>
+            </div>
           </div>
           <label class="field"><span>Campaigns page ka link</span><input type="url" name="start_url" value="${esc(v.start_url)}"><div class="hint">Vyro pe login karke jis page pe campaigns ki list dikhti hai, uska URL</div></label>
           <div class="form-grid">
@@ -751,7 +767,19 @@ async function checkVpn() {
     toast(v.country ? `Internet ${v.country_name} se aa raha hai (${v.ip})` : "Country pata nahi chali (internet check karo)");
   } catch (e) { toast(e.message, true); }
 }
-async function vyroLogin() { await act(() => api("/api/vyro/login", { method: "POST" })); }
+function loginChip(s) {
+  const c = s.login_check || {};
+  if (c.ok === true) return chip("good", "✓", `logged in · ${ago(c.at)}`);
+  if (c.ok === false) return chip("critical", "✕", "login nahi hua", c.url || "");
+  if (c.ok === null && c.error) return chip("warning", "!", "check fail", c.error);
+  return s.vyro_logged_in ? chip("info", "◌", "saved (check karo)") : chip("critical", "✕", "login nahi hua");
+}
+async function vyroLogin(mode = "bot", link = "") {
+  await act(() => api("/api/vyro/login", { method: "POST", body: { mode, link: (link || "").trim() } }));
+  setTimeout(() => STATE.tab === "settings" && renderSettings(), 15000);
+}
+async function vyroLoginDone() { await act(() => api("/api/vyro/login-done", { method: "POST" })); setTimeout(renderSettings, 20000); }
+async function vyroCheck() { await act(() => api("/api/vyro/check", { method: "POST" })); setTimeout(renderSettings, 20000); }
 
 // ------------------------------------------------------------------ router
 const RENDER = { dashboard: () => refreshTop(), pages: renderPages, add: renderAdd, campaigns: renderCampaigns, clips: renderClips, schedule: renderSchedule, earnings: renderEarnings, logs: renderLogs, settings: renderSettings };

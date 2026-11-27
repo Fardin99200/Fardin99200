@@ -16,6 +16,7 @@ import argparse
 import json
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -28,6 +29,7 @@ from dotenv import load_dotenv
 
 from clipper import instagram, network, pipeline, uploader, vpn, vyro
 from clipper.botconfig import BotConfig, Page
+from clipper import browser_agent
 from clipper.browser_agent import Browser
 from clipper.config import Campaign
 from clipper.state import State
@@ -323,22 +325,74 @@ def refresh_stats(cfg: BotConfig, st: State) -> None:
 
 # ---------------------------------------------------------------- control
 
-def login(cfg: BotConfig, st: State | None = None) -> None:
-    """Open the bot's browser on Vyro; the login is saved when you close the window."""
-    if st:
-        status(st, "Vyro login window khuli hai: login karke window band karo")
-    print("Browser mein Vyro pe login karo, phir browser window band kar do.")
-    try:
-        with Browser(cfg.vyro.profile_dir, cfg.vyro.allowed_domains, headless=False) as b:
-            b.page.goto(cfg.vyro.start_url)
-            b.ctx.wait_for_event("close", timeout=0)
-    except Exception as e:
-        if "closed" not in str(e).lower():
-            raise
+LOGIN_HINTS = ("login", "log-in", "signin", "sign-in", "sign_in", "signup", "sign-up", "auth")
+
+
+def verify_login(cfg: BotConfig, st: State | None = None) -> bool:
+    """Open Vyro in the background and check we are not bounced to a sign-in page."""
     st = st or State("bot.db")
-    st.set("login_ok_at", time.time())
-    st.set("login_required", "0")
-    log.info("Vyro login saved")
+    try:
+        with Browser(cfg.vyro.profile_dir, cfg.vyro.allowed_domains, headless=True) as b:
+            b.page.goto(cfg.vyro.start_url, wait_until="domcontentloaded", timeout=45000)
+            b._settle()
+            time.sleep(3)  # single-page apps redirect to /login after loading
+            url = b.page.url.lower()
+            text = (b.page.inner_text("body") or "").lower()[:6000]
+            email_box = b.page.locator("input[type=email], input[name*=email]").count() > 0
+        on_login_page = any(h in url for h in LOGIN_HINTS) or (
+            email_box and any(k in text for k in ("log in", "login", "sign in", "continue with", "enter your email")))
+        ok = not on_login_page
+    except Exception as e:
+        log.warning(f"Login check failed: {e}")
+        st.set("login_check", json.dumps({"ok": None, "at": time.time(), "error": str(e)[:200]}))
+        return False
+    st.set("login_check", json.dumps({"ok": ok, "at": time.time(), "url": url[:120]}))
+    if ok:
+        st.set("login_ok_at", time.time())
+        st.set("login_required", "0")
+    log.info(f"Vyro login check: {'logged in' if ok else 'NOT logged in'} ({url[:80]})")
+    return ok
+
+
+def login(cfg: BotConfig, st: State | None = None, mode: str = "bot", link: str = "") -> bool:
+    """Open a browser window on Vyro so you can log in. Closing the window saves the login.
+
+    mode "bot":    the bot's own browser (installed Edge/Chrome when available). Paste the email
+                   login link into its address bar if Vyro emails you one.
+    mode "normal": a completely normal browser window on the same profile, for sign-ins
+                   (Google) that refuse automated browsers. Close it when done.
+    link:          open this login link (from Vyro's email) directly in the bot's profile.
+    """
+    st = st or State("bot.db")
+    status(st, "Vyro login window khuli hai: login karke window band karo")
+    print("Browser mein Vyro pe login karo, phir browser window band kar do.")
+    target = link or cfg.vyro.start_url
+    sb = browser_agent.system_browser()
+    if mode == "normal" and sb:
+        profile = str(Path(browser_agent.profile_path(cfg.vyro.profile_dir)).resolve())
+        st.set("login_done", "0")
+        args = [sb[1], f"--user-data-dir={profile}", "--no-first-run", "--no-default-browser-check", "--new-window"]
+        if os.getenv("RARECASH_PROXY"):  # log in from the same (VPN) country the bot will use
+            args.append(f"--proxy-server={os.environ['RARECASH_PROXY']}")
+        proc = subprocess.Popen(args + [target])
+        while proc.poll() is None and st.get("login_done") != "1":
+            time.sleep(2)
+            st.set("heartbeat", time.time())
+        if proc.poll() is None:  # "Login ho gaya" pressed in the dashboard: let the browser save, then close
+            time.sleep(5)
+            proc.terminate()
+    else:
+        try:
+            with Browser(cfg.vyro.profile_dir, cfg.vyro.allowed_domains, headless=False) as b:
+                b.page.goto(target)
+                b.ctx.wait_for_event("close", timeout=0)
+        except Exception as e:
+            if "closed" not in str(e).lower():
+                raise
+    status(st, "Vyro login check ho raha hai...")
+    ok = verify_login(cfg, st)
+    status(st, "Vyro login ho gaya" if ok else "Vyro login nahi hua: dobara try karo")
+    return ok
 
 
 def setup_youtube(cfg: BotConfig, only_page: str | None = None) -> None:
@@ -414,10 +468,14 @@ def run_forever(stop: threading.Event | None = None, once: bool = False) -> None
         if st.get("login_request") == "1":
             st.set("login_request", "0")
             try:
-                login(cfg, st)
-                st.set("login_required", "0")
+                login(cfg, st, st.get("login_mode", "bot") or "bot", st.get("login_link", "") or "")
             except Exception as e:
                 log.error(f"Login failed: {e}")
+            finally:
+                st.set("login_link", "")
+        if st.get("login_verify") == "1":
+            st.set("login_verify", "0")
+            verify_login(cfg, st)
 
         if st.get("enabled", "1") == "1" or st.get("run_now") == "1" or once:
             st.set("run_now", "0")
@@ -434,7 +492,7 @@ def run_forever(stop: threading.Event | None = None, once: bool = False) -> None
             status(st, "Bot OFF hai")
 
         while time.time() < wake and not stop.is_set():
-            if st.get("run_now") == "1" or st.get("login_request") == "1":
+            if st.get("run_now") == "1" or st.get("login_request") == "1" or st.get("login_verify") == "1":
                 break
             if st.get("enabled", "1") == "0" and not st.get("status", "").startswith("Bot OFF"):
                 status(st, "Bot OFF hai")

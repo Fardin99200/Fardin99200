@@ -1,7 +1,7 @@
 # Copy this file to bot.yaml and fill in your details.
 
 vyro:
-  start_url: "https://vyro.com"   # login ke baad jis page pe campaigns dikhte hain uska URL yahan daalo
+  start_url: "https://app.vyro.com"   # Vyro app (login ke baad campaigns yahin dikhte hain)
   allowed_domains: ["vyro.com"]   # bot sirf in websites pe jayega
   headless: false                 # true = browser window chhupi rahegi
   scan_every_hours: 3             # har 3 ghante mein naye campaigns dekhega

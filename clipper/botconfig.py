@@ -12,7 +12,7 @@ class Strict(BaseModel):
 
 
 class VyroSettings(Strict):
-    start_url: str = "https://vyro.com"
+    start_url: str = "https://app.vyro.com"
     allowed_domains: list[str] = ["vyro.com"]
     profile_dir: str = "browser_profile"
     headless: bool = False
@@ -70,7 +70,10 @@ class BotConfig(Strict):
         path = Path(path)
         if not path.exists():
             return cls()
-        return cls(**(yaml.safe_load(path.read_text(encoding="utf-8")) or {}))
+        cfg = cls(**(yaml.safe_load(path.read_text(encoding="utf-8")) or {}))
+        if cfg.vyro.start_url.rstrip("/") in ("https://vyro.com", "https://www.vyro.com"):
+            cfg.vyro.start_url = "https://app.vyro.com"  # the clipper app lives on app.vyro.com
+        return cfg
 
     def save(self, path: str | Path = "bot.yaml") -> None:
         path = Path(path)
