@@ -10,6 +10,12 @@ vyro:
   min_cpm_usd: 0                  # is se kam pay ($ per 1000 views) wale campaigns skip
   agent_max_steps: 30
 
+# VPN guard: apna VPN app ON rakho. Internet in countries se na aa raha ho to
+# bot Vyro + posting rok deta hai (clips bante rehte hain).
+network:
+  vpn_required: false
+  allowed_countries: ["US", "GB", "CA", "AU"]
+
 loop_minutes: 10                  # har 10 minute mein post/submit check
 
 # Settings for every clip (any field from campaign.example.yaml)

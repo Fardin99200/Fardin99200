@@ -7,7 +7,7 @@ const fmt = (n) => Number(n || 0).toLocaleString("en-IN");
 const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const STATE = { tab: "dashboard", pages: [], clipFilter: "", campFilter: "all", timers: [] };
 
-if (localStorage.theme === "light") document.documentElement.dataset.theme = "light";
+if (localStorage.theme === "dark") document.documentElement.dataset.theme = "dark";
 
 async function api(path, opts = {}) {
   const init = { ...opts, headers: { ...(opts.body && !(opts.body instanceof FormData) ? { "Content-Type": "application/json" } : {}), ...(opts.headers || {}) } };
@@ -79,19 +79,38 @@ function vyroChip(posts) {
 }
 
 // ------------------------------------------------------------------ top bar
+const TAB_TITLES = { pages: "Pages", add: "Add Video", campaigns: "Campaigns", clips: "Clips", schedule: "Schedule", earnings: "Earnings", logs: "Logs", settings: "Settings" };
+function greeting() {
+  const h = new Date().getHours();
+  return h < 12 ? "Good Morning" : h < 17 ? "Good Afternoon" : "Good Evening";
+}
+function setHeader() {
+  const who = window.innerWidth < 600 ? "" : ", Rare Cash";
+  $("#greet").textContent = STATE.tab === "dashboard" ? `${greeting()}${who}` : TAB_TITLES[STATE.tab] || "Rare Cash";
+}
+function vpnChip(v, required) {
+  if (!v || !v.country) return required ? chip("warning", "◌", "VPN check ho raha hai") : "";
+  const where = `${v.country_name} · ${v.ip}`;
+  if (!required) return chip("info", "◎", v.country_name, where);
+  return v.pass ? chip("good", "✓", `VPN: ${v.country_name}`, where) : chip("critical", "✕", `VPN off (${v.country_name})`, where);
+}
 async function refreshTop() {
   try {
-    const o = await api("/api/overview");
+    const o = await api(STATE.tab === "dashboard" ? "/api/dashboard" : "/api/overview");
     STATE.overview = o;
     $("#powerToggle").checked = o.enabled;
     $("#powerLabel").textContent = o.enabled ? "Bot ON" : "Bot OFF";
     $("#statusText").textContent = o.status;
     $("#engineDot").className = "dot " + (!o.engine_alive ? "dead" : o.enabled ? "on" : "off");
+    $("#vpnChip").innerHTML = vpnChip(o.vpn, o.vpn_required);
     if (STATE.tab === "dashboard") renderDashboard(o);
   } catch (e) {
     $("#statusText").textContent = "Dashboard server se connect nahi ho pa raha";
     $("#engineDot").className = "dot dead";
   }
+}
+async function refreshVpn() {
+  try { const v = await api("/api/network"); $("#vpnChip").innerHTML = vpnChip(v, v.required); } catch (e) { /* offline */ }
 }
 $("#powerToggle").addEventListener("change", async (e) => {
   const on = e.target.checked;
@@ -100,89 +119,201 @@ $("#powerToggle").addEventListener("change", async (e) => {
 });
 
 // ------------------------------------------------------------------ dashboard
+const SLOT = (i) => `var(--s${(i % 6) + 1})`;
+const SLOT_INK = (i) => ["#fff", "#fff", "#111", "#111", "#111", "#fff"][i % 6]; // readable letter on each slot
+function ticks(value, total, n = 44) {
+  const on = total ? Math.round(Math.min(1, value / total) * n) : 0;
+  return `<div class="ticks" role="img" aria-label="${value} of ${total}">${Array.from({ length: n }, (_, i) => `<i class="${i < on ? "on" : ""}"></i>`).join("")}</div>`;
+}
 function renderDashboard(o) {
   const warn = o.warnings.map((w) => `<div class="alert ${w.level}"><b>${w.level === "critical" ? "✕ Zaroori" : "! Dhyan do"}</b><span>${esc(w.text)}</span>${w.tab ? `<a href="#${w.tab}">Fix karo →</a>` : ""}</div>`).join("");
-  const stat = (label, value, sub = "", hero = false) => `<div class="card stat ${hero ? "hero" : ""}"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
+  const daily = o.daily || [];
+  const last14 = daily.slice(-14);
+  const views7 = daily.slice(-7).reduce((a, d) => a + d.views, 0);
+  const totalPosts = o.by_page.reduce((a, p) => a + p.posts, 0);
+  const pagesSorted = [...o.by_page].sort((a, b) => b.earned - a.earned || b.views - a.views);
   $("#tab-dashboard").innerHTML = `
-    <h1>Dashboard</h1>
-    ${warn ? `<div class="stack" style="margin-bottom:16px">${warn}</div>` : ""}
-    <div class="grid stats">
-      ${stat("Estimated kamai", money(o.earned), "views × campaign CPM", true)}
-      ${stat("Total views", fmt(o.views), "saare posts")}
-      ${stat("Aaj ke posts", fmt(o.posted_today), `${fmt(o.posted)} total`)}
-      ${stat("Clips bane", fmt(o.clips), `${fmt(o.clips_today)} aaj`)}
-      ${stat("Active campaigns", fmt(o.campaigns_active), `${fmt(o.campaigns_total)} total`)}
-      ${stat("Vyro submitted", fmt(o.submitted), "links")}
-    </div>
-    <div class="grid two">
-      <div class="card">
-        <div class="row between"><h2>Views per day</h2><a href="#earnings">Earnings →</a></div>
-        <div id="dashChart" class="chart"><div class="empty">Loading…</div></div>
+    ${warn ? `<div style="margin-bottom:14px">${warn}</div>` : ""}
+    <div class="dash">
+      <div class="card c4">
+        <div class="card-head"><h2>Estimated kamai</h2><span class="pill">views × CPM</span></div>
+        <div class="big">${money(o.earned)}</div>
+        ${ticks(o.posted_today, o.capacity_today)}
+        <div class="meta-line"><span>Aaj ${fmt(o.posted_today)} / ${fmt(o.capacity_today)} posts</span><span>${fmt(o.posted)} total</span></div>
       </div>
-      <div class="card">
-        <h2>Bot control</h2>
-        <p class="muted" style="margin-top:0">${esc(o.status)}</p>
-        <div class="row" style="margin-bottom:14px">
-          <button class="primary" onclick="runNow()">▶ Abhi chalao</button>
-          <button onclick="scanNow()">⟳ Vyro scan abhi</button>
+      <div class="card c4">
+        <div class="card-head"><h2>Campaigns</h2><a href="#campaigns" class="pill">Sab dekho</a></div>
+        <div class="big">${fmt(o.campaigns_active)}<small>active</small></div>
+        ${ticks(o.submitted, Math.max(o.posted, 1))}
+        <div class="meta-line"><span>Vyro submitted ${fmt(o.submitted)} / ${fmt(o.posted)}</span><span>${fmt(o.campaigns_total)} total</span></div>
+      </div>
+      <div class="card views-card c4 r2">
+        <div class="card-head"><h2>Total views</h2><span class="pill" style="background:rgba(255,255,255,.18);border-color:transparent;color:#fff">14 din</span></div>
+        <div class="big">${fmt(o.views)}</div>
+        <small>+${fmt(views7)} pichhle 7 din mein</small>
+        <div class="chart" id="viewsChart"></div>
+      </div>
+
+      <div class="card c4">
+        <div class="card-head"><h2>Top pages</h2><a href="#pages" class="pill">Pages</a></div>
+        ${pagesSorted.length ? pagesSorted.slice(0, 5).map((p) => `<div class="list-row">
+            <span class="ava" style="background:${SLOT(p.slot)};color:${SLOT_INK(p.slot)}">${esc(p.name.slice(0, 2).toUpperCase())}</span>
+            <span class="name">${esc(p.name)}${p.enabled ? "" : " <small>(off)</small>"}</span>
+            <span class="num"><b>${fmt(p.views)}</b> views</span><span class="num"><b>${money(p.earned)}</b></span></div>`).join("")
+          : `<div class="empty"><b>Koi page nahi</b><a href="#pages">Page add karo →</a></div>`}
+      </div>
+      <div class="card c4">
+        <div class="card-head"><h2>Posts by page</h2><span class="pill">${fmt(totalPosts)} posts</span></div>
+        <div id="donut"></div>
+      </div>
+
+      <div class="card c8">
+        <div class="card-head"><h2>Kamai per day</h2><span class="pill">30 din</span></div>
+        <div class="chart" id="earnChart"></div>
+      </div>
+      <div class="c4" style="display:grid;gap:18px">
+        <div class="card control-card">
+          <div class="card-head"><h2>Bot control</h2><span class="pill">${o.enabled ? "ON" : "OFF"}</span></div>
+          <div class="muted" style="font-size:13px">${esc(o.status)}</div>
+          <div class="row"><button class="primary" onclick="runNow()">▶ Abhi chalao</button><button onclick="scanNow()">⟳ Vyro scan</button></div>
+          <div class="kv"><span>Last round</span><b>${ago(o.last_cycle)}</b><span>Agla Vyro scan</span><b>${o.next_scan ? until(o.next_scan) : "jaldi"}</b>
+            <span>Clips bane</span><b>${fmt(o.clips)} (${fmt(o.clips_today)} aaj)</b></div>
         </div>
-        <div class="muted" style="font-size:13px">
-          Last round: <b>${ago(o.last_cycle)}</b><br>
-          Agla Vyro scan: <b>${o.next_scan ? until(o.next_scan) : "jaldi"}</b><br>
-          Active pages: <b>${o.pages}</b>
+        <div class="card dark-card">
+          <div class="card-head"><h2>Posts per day</h2><span class="pill">14 din</span></div>
+          <div class="big" style="color:#fff">${fmt(last14.reduce((a, d) => a + d.posts, 0))}<small style="color:#9c9c9c">posts</small></div>
+          <div class="chart" id="postsChart"></div>
         </div>
       </div>
-    </div>
-    <div class="card" style="margin-top:16px">
-      <div class="row between"><h2>Live activity</h2><a href="#logs">Saare logs →</a></div>
-      ${activityList(o.activity)}
+
+      <div class="card c12">
+        <div class="card-head"><h2>Live activity</h2><a href="#logs" class="pill">Saare logs</a></div>
+        ${activityList(o.activity)}
+      </div>
     </div>`;
-  api("/api/earnings").then((e) => barChart($("#dashChart"), e.daily)).catch(() => {});
+  whiteBars($("#viewsChart"), last14);
+  donut($("#donut"), o.by_page);
+  barChart($("#earnChart"), daily, { H: 340, key: "earned", label: (v) => money(v), axis: (v) => "$" + (v >= 1000 ? (v / 1000).toFixed(1) + "k" : Math.round(v)) });
+  areaChart($("#postsChart"), last14);
 }
 function activityList(lines) {
   if (!lines.length) return `<div class="empty"><b>Abhi koi activity nahi</b>Bot ON karo, kaam yahan dikhega.</div>`;
+  lines = lines.filter((l) => /^\d{4}-\d\d-\d\d /.test(l));
   return `<ul class="activity">${lines.slice().reverse().map((l) => {
     const m = l.match(/^(\S+ (\S+)) (\w+) (.*)$/);
-    return m ? `<li class="${m[3]}"><time>${m[2].slice(0, 5)}</time><span>${esc(m[4])}</span></li>` : `<li><span>${esc(l)}</span></li>`;
+    return m ? `<li class="${m[3]}"><time>${m[2].slice(0, 5)}</time><span title="${esc(m[4])}">${esc(m[4])}</span></li>` : `<li><span>${esc(l)}</span></li>`;
   }).join("")}</ul>`;
 }
 async function runNow() { await act(() => api("/api/bot/run-now", { method: "POST" }), "Bot abhi ek round chalayega"); }
 async function scanNow() { await act(() => api("/api/bot/scan-now", { method: "POST" }), "Vyro scan shuru ho raha hai"); }
 
-// bar chart: single series, rounded data-end, 2px gaps, hover tooltip
-function barChart(el, data) {
-  if (!data.length || data.every((d) => !d.views)) {
-    el.innerHTML = `<div class="empty"><b>Abhi views ka data nahi</b>Posts hone ke baad har 2 ghante views update honge.</div>`;
-    return;
-  }
-  const W = 640, H = 220, L = 44, B = 24, T = 10;
-  const max = Math.max(...data.map((d) => d.views)) || 1;
-  const nice = Math.pow(10, Math.floor(Math.log10(max)));
-  const top = Math.ceil(max / nice) * nice;
-  const bw = (W - L) / data.length;
-  const y = (v) => T + (H - T - B) * (1 - v / top);
-  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Views per day">`;
-  for (let i = 0; i <= 4; i++) {
-    const v = (top / 4) * i;
-    svg += `<line class="grid-line" x1="${L}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/><g class="axis"><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v >= 1000 ? (v / 1000).toFixed(v % 1000 ? 1 : 0) + "k" : v}</text></g>`;
-  }
+// ---------- charts (single series unless noted; hover tooltips everywhere) ----------
+const dayLabel = (d) => new Date(d + "T00:00:00").toLocaleDateString([], { day: "numeric", month: "short" });
+function niceTop(max) {
+  if (max <= 0) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(max)));
+  return [1, 2, 2.5, 5, 10].map((m) => m * p).find((v) => v >= max);
+}
+function roundedTop(x, yTop, w, base, r) {
+  const h = base - yTop;
+  if (h <= 0) return "";
+  r = Math.min(r, w / 2, h);
+  return `M${x},${base} V${yTop + r} Q${x},${yTop} ${x + r},${yTop} H${x + w - r} Q${x + w},${yTop} ${x + w},${yTop + r} V${base} Z`;
+}
+function emptyChart(el, msg) { el.innerHTML = `<div class="empty" style="width:100%"><b>Abhi data nahi</b>${msg}</div>`; }
+
+// bars: past days in the light step, today in the accent; hover darkens
+function barChart(el, data, opt = {}) {
+  const key = opt.key || "views", label = opt.label || ((v) => fmt(v) + " views"), axis = opt.axis || ((v) => (v >= 1000 ? (v / 1000).toFixed(v % 1000 ? 1 : 0) + "k" : v));
+  if (!data.length || data.every((d) => !d[key])) return emptyChart(el, "Posts ke views aane ke baad chart dikhega.");
+  const W = 760, H = opt.H || 230, L = 44, B = 26, T = 12;
+  const top = niceTop(Math.max(...data.map((d) => d[key])));
+  const bw = (W - L) / data.length, base = H - B;
+  const y = (v) => T + (base - T) * (1 - v / top);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opt.aria || "chart")}">`;
+  for (let i = 0; i <= 4; i++) { const v = (top / 4) * i; svg += `<line class="grid-line" x1="${L}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/><g class="axis"><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${axis(v)}</text></g>`; }
   data.forEach((d, i) => {
-    const x = L + i * bw + 1, w = Math.max(2, bw - 2), h = Math.max(0, H - B - y(d.views));
-    const r = Math.min(4, w / 2, h);
-    const yy = H - B - h;
-    const path = h > 0 ? `M${x},${H - B} V${yy + r} Q${x},${yy} ${x + r},${yy} H${x + w - r} Q${x + w},${yy} ${x + w},${yy + r} V${H - B} Z` : "";
-    const label = new Date(d.day).toLocaleDateString([], { day: "numeric", month: "short" });
-    svg += `<rect class="hit" x="${L + i * bw}" y="${T}" width="${bw}" height="${H - T - B}" fill="transparent" data-tip="${esc(label)}: ${fmt(d.views)} views"/>`;
-    if (path) svg += `<path class="bar" d="${path}" pointer-events="none"/>`;
-    if (i % Math.ceil(data.length / 7) === 0) svg += `<g class="axis"><text x="${x + w / 2}" y="${H - 6}" text-anchor="middle">${esc(label)}</text></g>`;
+    const x = L + i * bw + 1, w = Math.max(2, bw - 2), last = i === data.length - 1;
+    svg += `<g class="barg" data-tip="<b>${esc(label(d[key]))}</b>${esc(dayLabel(d.day))}"><rect x="${L + i * bw}" y="${T}" width="${bw}" height="${base - T}" fill="transparent"/>
+      <path d="${roundedTop(x, y(d[key]), w, base, 4)}" fill="${last ? "var(--series-1)" : "var(--series-soft)"}" class="bar"/></g>`;
+    const step = Math.ceil(data.length / 8);
+    if ((i % step === 0 && data.length - 1 - i >= step * 0.7) || last) svg += `<g class="axis"><text x="${x + w / 2}" y="${H - 7}" text-anchor="${last ? "end" : "middle"}" ${last ? `dx="${w / 2}"` : ""}>${esc(dayLabel(d.day))}</text></g>`;
   });
   el.innerHTML = svg + "</svg>";
+  el.querySelectorAll(".barg").forEach((g) => { g.addEventListener("mouseenter", () => (g.querySelector(".bar").style.fill = "var(--series-1)")); g.addEventListener("mouseleave", () => (g.querySelector(".bar").style.fill = "")); });
   bindTips(el);
+}
+// white bars on the blue card
+function whiteBars(el, data) {
+  if (!data.length || data.every((d) => !d.views)) return emptyChart(el, "Views har 2 ghante update hote hain.");
+  const W = 320, H = 250, B = 22, T = 8;
+  const top = niceTop(Math.max(...data.map((d) => d.views)));
+  const bw = W / data.length, base = H - B;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Views per day">`;
+  data.forEach((d, i) => {
+    const w = Math.max(3, bw * 0.55), x = i * bw + (bw - w) / 2, yy = T + (base - T) * (1 - d.views / top), last = i === data.length - 1;
+    svg += `<g class="barg" data-tip="<b>${fmt(d.views)} views</b>${esc(dayLabel(d.day))}"><rect x="${i * bw}" y="${T}" width="${bw}" height="${base - T}" fill="transparent"/>
+      <path class="bar" d="${roundedTop(x, yy, w, base, w / 2)}" fill="#fff" fill-opacity="${last ? 1 : 0.55}"/></g>`;
+    if (i % 3 === 0 || last) svg += `<g class="axis"><text x="${x + w / 2}" y="${H - 5}" text-anchor="middle">${new Date(d.day + "T00:00:00").getDate()}</text></g>`;
+  });
+  el.innerHTML = svg + "</svg>";
+  el.querySelectorAll(".barg").forEach((g) => { const b = g.querySelector(".bar"); const o = b.getAttribute("fill-opacity"); g.addEventListener("mouseenter", () => b.setAttribute("fill-opacity", 1)); g.addEventListener("mouseleave", () => b.setAttribute("fill-opacity", o)); });
+  bindTips(el);
+}
+// donut: categorical, colour = page's fixed slot, 2px surface gaps, legend with labels
+function donut(el, pages) {
+  const items = pages.filter((p) => p.posts > 0);
+  const total = items.reduce((a, p) => a + p.posts, 0);
+  if (!total) return (el.innerHTML = `<div class="empty"><b>Abhi koi post nahi</b>Post hone ke baad yahan dikhega.</div>`);
+  const R = 60, r = 40, C = 75;
+  let a0 = -Math.PI / 2, paths = "";
+  const pt = (ang, rad) => [C + rad * Math.cos(ang), C + rad * Math.sin(ang)];
+  items.forEach((p) => {
+    const a1 = a0 + (p.posts / total) * Math.PI * 2, big = a1 - a0 > Math.PI ? 1 : 0;
+    const full = items.length === 1;
+    const d = full ? `M${C},${C - R} A${R},${R} 0 1 1 ${C - 0.01},${C - R} L${C - 0.01},${C - r} A${r},${r} 0 1 0 ${C},${C - r} Z`
+      : (() => { const [x0, y0] = pt(a0, R), [x1, y1] = pt(a1, R), [x2, y2] = pt(a1, r), [x3, y3] = pt(a0, r);
+          return `M${x0},${y0} A${R},${R} 0 ${big} 1 ${x1},${y1} L${x2},${y2} A${r},${r} 0 ${big} 0 ${x3},${y3} Z`; })();
+    paths += `<path d="${d}" fill="${SLOT(p.slot)}" stroke="var(--surface-1)" stroke-width="2" data-tip="<b>${esc(p.name)}</b>${p.posts} posts · ${Math.round((p.posts / total) * 100)}%"/>`;
+    a0 = a1;
+  });
+  el.innerHTML = `<div class="donut-wrap"><svg viewBox="0 0 150 150" role="img" aria-label="Posts by page">${paths}
+      <text x="75" y="72" text-anchor="middle" style="font-size:22px;font-weight:600;fill:var(--text-primary)">${total}</text>
+      <text x="75" y="90" text-anchor="middle" style="font-size:11px;fill:var(--text-secondary)">posts</text></svg>
+    <ul class="legend">${items.map((p) => `<li><span class="sw" style="background:${SLOT(p.slot)}"></span><span class="lbl">${esc(p.name)}</span><span class="val">${p.posts}</span><span class="pct">${Math.round((p.posts / total) * 100)}%</span></li>`).join("")}</ul></div>`;
+  bindTips(el);
+}
+// area on the dark card: 2px line, ~10% fill, crosshair + tooltip
+function areaChart(el, data) {
+  if (!data.length || data.every((d) => !d.posts)) return emptyChart(el, "Posts hone par graph banega.");
+  const W = 320, H = 120, T = 10, B = 18;
+  const top = niceTop(Math.max(...data.map((d) => d.posts)));
+  const x = (i) => (i / (data.length - 1)) * W, y = (v) => T + (H - T - B) * (1 - v / top);
+  const pts = data.map((d, i) => [x(i), y(d.posts)]);
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+  const area = `${line} L${W},${H - B} L0,${H - B} Z`;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Posts per day">
+      <line class="grid-line" x1="0" x2="${W}" y1="${H - B}" y2="${H - B}"/>
+      <path d="${area}" fill="#338ced" fill-opacity=".12"/><path d="${line}" fill="none" stroke="#338ced" stroke-width="2" stroke-linejoin="round"/>
+      <line id="xhair" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="#9c9c9c" stroke-width="1" visibility="hidden"/>
+      <circle id="xdot" r="4.5" fill="#338ced" stroke="#121316" stroke-width="2" visibility="hidden"/>
+      <g class="axis"><text x="0" y="${H - 3}">${esc(dayLabel(data[0].day))}</text><text x="${W}" y="${H - 3}" text-anchor="end">aaj</text></g>
+      <rect id="xhit" x="0" y="0" width="${W}" height="${H}" fill="transparent"/></svg>`;
+  const svg = el.querySelector("svg"), hit = el.querySelector("#xhit"), xh = el.querySelector("#xhair"), xd = el.querySelector("#xdot"), tip = $("#tooltip");
+  hit.addEventListener("mousemove", (e) => {
+    const rect = svg.getBoundingClientRect(), i = Math.max(0, Math.min(data.length - 1, Math.round(((e.clientX - rect.left) / rect.width) * (data.length - 1))));
+    const [px, py] = pts[i];
+    xh.setAttribute("x1", px); xh.setAttribute("x2", px); xh.setAttribute("visibility", "visible");
+    xd.setAttribute("cx", px); xd.setAttribute("cy", py); xd.setAttribute("visibility", "visible");
+    tip.innerHTML = `<b>${data[i].posts} posts</b>${esc(dayLabel(data[i].day))}`; tip.hidden = false;
+    tip.style.left = e.clientX + 12 + "px"; tip.style.top = e.clientY - 44 + "px";
+  });
+  hit.addEventListener("mouseleave", () => { xh.setAttribute("visibility", "hidden"); xd.setAttribute("visibility", "hidden"); tip.hidden = true; });
 }
 function bindTips(el) {
   const tip = $("#tooltip");
   el.querySelectorAll("[data-tip]").forEach((n) => {
-    n.addEventListener("mousemove", (e) => { tip.textContent = n.dataset.tip; tip.hidden = false; tip.style.left = e.clientX + 12 + "px"; tip.style.top = e.clientY - 30 + "px"; });
+    n.addEventListener("mousemove", (e) => { tip.innerHTML = n.dataset.tip; tip.hidden = false; tip.style.left = e.clientX + 12 + "px"; tip.style.top = e.clientY - 44 + "px"; });
     n.addEventListener("mouseleave", () => (tip.hidden = true));
   });
 }
@@ -438,7 +569,7 @@ async function renderEarnings() {
         <td class="num">${fmt(r.views)}</td><td class="num">${fmt(r.likes)}</td><td class="num">${r.cpm ? "$" + r.cpm : "–"}</td><td class="num">${money(r.earned)}</td>
         <td>${r.vyro === "submitted" ? chip("good", "✓", "submitted") : r.vyro === "not_needed" ? chip("", "–", "manual") : r.vyro === "failed" ? chip("serious", "!", "retry") : chip("warning", "◌", "pending")}</td></tr>`).join("")}</tbody></table>`
       : `<div class="empty">Posts hone ke baad yahan dikhega</div>`}</div>`;
-  barChart($("#earnChart"), e.daily);
+  barChart($("#earnChart"), e.daily, { key: "views", aria: "Views per day" });
   bindTips($("#tab-earnings"));
 }
 
@@ -502,26 +633,45 @@ async function renderSettings() {
         <div class="card">
           <h2>Bot</h2>
           <label class="field"><span>Round har kitne minute</span><input type="number" min="1" name="loop_minutes" value="${s.loop_minutes}"></label>
-          <label class="check"><input type="checkbox" id="lightTheme" ${localStorage.theme === "light" ? "checked" : ""}> Light theme</label>
+          <label class="check"><input type="checkbox" id="darkTheme" ${localStorage.theme === "dark" ? "checked" : ""}> Dark theme</label>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>VPN guard</h2><span id="vpnNow">${vpnChip(STATE.overview && STATE.overview.vpn, s.network.vpn_required)}</span></div>
+        <p class="muted" style="margin-top:0">Apna VPN app (NordVPN, ProtonVPN, Surfshark…) PC pe ON rakho. Ye guard sirf check karta hai ki internet kis country se aa raha hai.
+          VPN band ho jaye to bot Vyro aur posting rok deta hai (clips bante rehte hain), aur VPN wapas aate hi khud chalu ho jata hai.</p>
+        <label class="check"><input type="checkbox" name="vpn_required" ${s.network.vpn_required ? "checked" : ""}> VPN guard ON (sirf in countries se chalo)</label>
+        <div class="form-grid">
+          <label class="field"><span>Allowed countries (code, comma se)</span><input type="text" name="allowed_countries" value="${esc(s.network.allowed_countries.join(", "))}" placeholder="US, GB, CA, AU"><div class="hint">US = United States, GB = UK, CA = Canada, AU = Australia</div></label>
+          <div class="field"><span class="muted" style="display:block;font-size:12.5px;font-weight:600;margin-bottom:5px">Abhi ka internet</span><button type="button" onclick="checkVpn()">⟳ Check karo</button></div>
         </div>
       </div>
       <div><button class="primary" type="submit">Save settings</button></div>
     </form>`;
-  $("#lightTheme").addEventListener("change", (e) => {
-    localStorage.theme = e.target.checked ? "light" : "dark";
-    if (e.target.checked) document.documentElement.dataset.theme = "light"; else delete document.documentElement.dataset.theme;
+  $("#darkTheme").addEventListener("change", (e) => {
+    localStorage.theme = e.target.checked ? "dark" : "light";
+    if (e.target.checked) document.documentElement.dataset.theme = "dark"; else delete document.documentElement.dataset.theme;
   });
   $("#setForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = e.target, fd = Object.fromEntries(new FormData(f));
     await act(() => api("/api/settings", { method: "POST", body: {
       vyro: { start_url: fd.start_url, scan_every_hours: +fd.scan_every_hours, min_cpm_usd: +fd.min_cpm_usd, max_new_campaigns_per_scan: +fd.max_new_campaigns_per_scan, max_materials_per_campaign: +fd.max_materials_per_campaign, headless: f.headless.checked },
+      network: { vpn_required: f.vpn_required.checked, allowed_countries: (fd.allowed_countries || "").split(",") },
       loop_minutes: +fd.loop_minutes,
       clip: { crop_mode: fd.crop_mode, whisper_model: fd.whisper_model, min_seconds: +fd.min_seconds, max_seconds: +fd.max_seconds, caption_highlight_color: (fd.caption_highlight_color || "FFFF00").replace("#", "").toUpperCase(), captions: f.captions.checked, caption_uppercase: f.caption_uppercase.checked },
       api_key: fd.api_key || null,
     } }), "Settings save ho gayi");
     renderSettings();
   });
+}
+async function checkVpn() {
+  try {
+    const v = await api("/api/network?refresh=1");
+    $("#vpnNow").innerHTML = vpnChip(v, v.required) || chip("", "?", "pata nahi chala");
+    $("#vpnChip").innerHTML = vpnChip(v, v.required);
+    toast(v.country ? `Internet ${v.country_name} se aa raha hai (${v.ip})` : "Country pata nahi chali (internet check karo)");
+  } catch (e) { toast(e.message, true); }
 }
 async function vyroLogin() { await act(() => api("/api/vyro/login", { method: "POST" })); }
 
@@ -536,11 +686,14 @@ function route() {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + STATE.tab));
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.tab === STATE.tab));
   STATE.timers.forEach(clearInterval); STATE.timers = [];
+  setHeader();
   if (STATE.tab === "logs") $("#tab-logs").innerHTML = "";
   Promise.resolve(RENDER[STATE.tab]()).catch((e) => toast(e.message, true));
   if (AUTO_REFRESH[STATE.tab]) STATE.timers.push(setInterval(() => { if ($("#modal").hidden) RENDER[STATE.tab](); }, AUTO_REFRESH[STATE.tab]));
 }
 window.addEventListener("hashchange", route);
 setInterval(() => { if (STATE.tab !== "dashboard") refreshTop(); }, 8000);
+setInterval(refreshVpn, 60000);
+setTimeout(refreshVpn, 800);
 refreshTop();
 route();

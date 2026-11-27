@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import bot
+from clipper import network
 from clipper.botconfig import BotConfig, Page
 from clipper.state import State
 
@@ -106,6 +107,36 @@ def earnings_rows(st: State) -> list[dict]:
     return out
 
 
+def daily_series(st: State, days: int = 30) -> list[dict]:
+    """Per day: views gained, estimated $ earned (views x CPM), posts published."""
+    today = datetime.now(timezone.utc).date()
+    day_list = [(today - timedelta(days=i)).isoformat() for i in range(days - 1, -1, -1)]
+    out = {d: {"day": d, "views": 0, "earned": 0.0, "posts": 0} for d in day_list}
+    cpm_cache: dict[int, float] = {}
+    rows = st.db.execute(
+        "SELECT h.clip_id, h.platform, h.day, h.views, c.campaign_url FROM stats_history h "
+        "JOIN clips c ON c.id=h.clip_id ORDER BY h.clip_id, h.platform, h.day").fetchall()
+    prev_key, prev_views = None, 0
+    for r in rows:
+        key = (r["clip_id"], r["platform"])
+        if key != prev_key:
+            prev_key, prev_views = key, 0
+        gained = max(0, r["views"] - prev_views)
+        prev_views = r["views"]
+        if r["day"] in out:
+            if r["clip_id"] not in cpm_cache:
+                cpm_cache[r["clip_id"]] = campaign_cpm(st, r["campaign_url"])
+            out[r["day"]]["views"] += gained
+            out[r["day"]]["earned"] += gained / 1000 * cpm_cache[r["clip_id"]]
+    for r in st.db.execute("SELECT substr(posted_at,1,10) AS d, COUNT(*) AS n FROM posts "
+                           "WHERE status='posted' GROUP BY d"):
+        if r["d"] in out:
+            out[r["d"]]["posts"] = r["n"]
+    for v in out.values():
+        v["earned"] = round(v["earned"], 2)
+    return list(out.values())
+
+
 def warnings(c: BotConfig, st: State) -> list[dict]:
     w = []
     add = lambda level, text, tab=None: w.append({"level": level, "text": text, "tab": tab})
@@ -113,6 +144,10 @@ def warnings(c: BotConfig, st: State) -> list[dict]:
         add("critical", "Claude API key nahi hai. Settings mein daalo.", "settings")
     if not shutil.which("ffmpeg"):
         add("critical", "FFmpeg install nahi hai (PowerShell: winget install ffmpeg)", None)
+    vpn = json.loads(st.get("vpn", "{}") or "{}")
+    if c.network.vpn_required and vpn and not vpn.get("pass", True):
+        add("critical", f"VPN band hai: internet {vpn.get('country_name') or 'unknown'} se aa raha hai. "
+                        "Vyro aur posting ruki hai. VPN app connect karo.", "settings")
     if not c.pages:
         add("warning", "Abhi koi page nahi hai. Pages mein jaake pehla page add karo.", "pages")
     if not st.get("login_ok_at"):
@@ -165,7 +200,36 @@ def overview():
         "earned": round(sum(e["earned"] for e in earn), 2),
         "warnings": warnings(c, st),
         "activity": log_tail(12),
+        "vpn": json.loads(st.get("vpn", "{}") or "{}"),
+        "vpn_required": c.network.vpn_required,
     }
+
+
+@app.get("/api/dashboard")
+def dashboard():
+    st, c = db(), cfg()
+    o = overview()
+    earn = earnings_rows(st)
+    pages = []
+    for i, p in enumerate(c.pages):  # color follows the page's position in the config
+        mine = [e for e in earn if e["page"] == p.name]
+        pages.append({"name": p.name, "slot": i, "enabled": p.enabled, "posts": len(mine),
+                      "views": sum(e["views"] for e in mine), "earned": round(sum(e["earned"] for e in mine), 2),
+                      "clips": st.db.execute("SELECT COUNT(*) FROM clips WHERE page=?", (p.name,)).fetchone()[0]})
+    capacity = 0
+    for p in c.pages:
+        if p.enabled:
+            capacity += sum(p.youtube.max_per_day if pf == "youtube" else p.instagram.max_per_day
+                            for pf in bot.page_platforms(p))
+    return {**o, "daily": daily_series(st, 30), "by_page": pages, "capacity_today": capacity}
+
+
+@app.get("/api/network")
+def network_check(refresh: bool = False):
+    c = cfg()
+    v = network.vpn_status(c.network.allowed_countries, c.network.vpn_required, max_age=0 if refresh else 60)
+    db().set("vpn", json.dumps(v))
+    return v
 
 
 class Toggle(BaseModel):
@@ -497,21 +561,7 @@ def earnings(days: int = 14):
         b["earned"] = round(b["earned"] + r["earned"], 2)
         b["posts"] += 1
 
-    # views gained per day, from daily snapshots
-    hist = st.db.execute("SELECT clip_id, platform, day, views FROM stats_history ORDER BY day").fetchall()
-    today = datetime.now(timezone.utc).date()
-    day_list = [(today - timedelta(days=i)).isoformat() for i in range(days, -1, -1)]
-    latest: dict[tuple, int] = {}
-    totals = []
-    hist_i = 0
-    for d in day_list:
-        while hist_i < len(hist) and hist[hist_i]["day"] <= d:
-            h = hist[hist_i]
-            latest[(h["clip_id"], h["platform"])] = h["views"]
-            hist_i += 1
-        totals.append(sum(latest.values()))
-    series = [{"day": d, "views": max(0, totals[i] - (totals[i - 1] if i else 0))}
-              for i, d in enumerate(day_list)][1:]
+    series = daily_series(st, days)
     return {
         "total_views": sum(r["views"] for r in rows),
         "total_earned": round(sum(r["earned"] for r in rows), 2),
@@ -552,6 +602,7 @@ def settings_get():
     d = Campaign()
     return {
         "vyro": c.vyro.model_dump(),
+        "network": c.network.model_dump(),
         "loop_minutes": c.loop_minutes,
         "clip": {k: c.clip_defaults.get(k, getattr(d, k)) for k in CLIP_KEYS},
         "api_key_set": bool(os.getenv("ANTHROPIC_API_KEY")),
@@ -562,6 +613,7 @@ def settings_get():
 
 class SettingsIn(BaseModel):
     vyro: dict | None = None
+    network: dict | None = None
     loop_minutes: int | None = None
     clip: dict | None = None
     api_key: str | None = None
@@ -573,6 +625,10 @@ def settings_save(body: SettingsIn):
     if body.vyro:
         c.vyro = c.vyro.model_copy(update={k: v for k, v in body.vyro.items() if k in c.vyro.model_fields})
         c.vyro = type(c.vyro)(**c.vyro.model_dump())  # re-validate
+    if body.network is not None:
+        net = {**c.network.model_dump(), **body.network}
+        net["allowed_countries"] = [x.strip().upper() for x in net.get("allowed_countries", []) if x.strip()]
+        c.network = type(c.network)(**net)
     if body.loop_minutes:
         c.loop_minutes = max(1, body.loop_minutes)
     if body.clip:

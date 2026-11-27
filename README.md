@@ -37,6 +37,23 @@ Bot ye sab apne aap karta hai:
 - **Kharcha:** Claude API ka kharcha usage pe hota hai. https://platform.claude.com pe monthly spend limit laga dena.
 - Dashboard sirf tumhare PC pe khulta hai (`localhost`), internet pe public nahi hai.
 
+## VPN ke saath chalana (Tier-1 country)
+
+Rare Cash khud VPN nahi deta. Apna VPN app (NordVPN, ProtonVPN, Surfshark…) PC pe **system-wide ON** rakho,
+taaki browser, YouTube/Instagram upload, sab usi country se jaaye.
+Phir **Settings → VPN guard** ON karo aur countries likho (jaise `US, GB, CA, AU`).
+
+- Dashboard ke upar chip dikhata hai: **✓ VPN: United States** ya **✕ VPN off (India)**
+- VPN band ho gaya to bot **Vyro aur posting rok deta hai**, clips bante rehte hain. VPN wapas aate hi apne aap chalu.
+- Ye check `ipinfo.io` se hota hai (internet kis country se aa raha hai, bas).
+
+Dhyan rakho:
+- VPN sirf tumhara IP badalta hai. Campaign ke **Tier-1 views** ka matlab aksar ye hota hai ki *dekhne wale* US/UK ke hon.
+  Wo audience pe depend karta hai, upload karne wale ke IP pe nahi.
+- Vyro payout ke waqt identity/country verify kar sakta hai. Agar campaign kisi country tak limited hai aur
+  tum wahan se nahi ho, to submissions reject ya payout hold ho sakta hai. Vyro ke rules padh ke hi chalana.
+- Ek hi account pe baar baar country badalna (India ↔ US) suspicious lagta hai. VPN ki ek hi country fix rakho.
+
 ---
 
 ## 1. Install (ek baar, Windows)

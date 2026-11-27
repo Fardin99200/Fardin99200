@@ -26,7 +26,7 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-from clipper import instagram, pipeline, uploader, vyro
+from clipper import instagram, network, pipeline, uploader, vyro
 from clipper.botconfig import BotConfig, Page
 from clipper.browser_agent import Browser
 from clipper.config import Campaign
@@ -223,6 +223,8 @@ def post_due(cfg: BotConfig, st: State) -> None:
             clip = pick_clip(st, page.name, platform)
             if clip is None:
                 continue
+            if not vpn_check(cfg, st):  # VPN dropped in the middle of the round
+                return
             meta = json.loads(clip["meta"])
             status(st, f"Post kar raha hai: {page.name} / {platform}")
             log.info(f"Posting to {page.name}/{platform}: {meta['title']}")
@@ -272,6 +274,8 @@ def submit_due(cfg: BotConfig, st: State) -> None:
     log.info(f"Submitting {len(todo)} posts on Vyro...")
     with browser(cfg) as b:
         for p in todo:
+            if not vpn_check(cfg, st):
+                return
             page = cfg.page(p["page"])
             try:
                 ok, notes = vyro.submit_post(b, cfg, p["campaign_url"], p["url"], p["platform"],
@@ -344,12 +348,31 @@ def setup_youtube(cfg: BotConfig, only_page: str | None = None) -> None:
             uploader._service(Path(page.youtube.token_file), Path(page.youtube.client_secret))
 
 
+NEEDS_VPN = {"scan", "post_due", "submit_due"}
+
+
+def vpn_check(cfg: BotConfig, st: State) -> bool:
+    v = network.vpn_status(cfg.network.allowed_countries, cfg.network.vpn_required)
+    st.set("vpn", json.dumps(v))
+    return v["pass"]
+
+
 def cycle(cfg: BotConfig, st: State) -> None:
     steps = [make_clips, post_due, submit_due, refresh_stats]
     if time.time() - float(st.get("last_scan", "0")) >= cfg.vyro.scan_every_hours * 3600 or st.campaigns("pending"):
         steps.insert(0, scan)
         st.set("last_scan", time.time())
+    vpn_warned = False
     for step in steps:
+        if step.__name__ in NEEDS_VPN and not vpn_check(cfg, st):
+            if not vpn_warned:
+                v = json.loads(st.get("vpn", "{}"))
+                where = v.get("country_name") or "unknown"
+                log.warning(f"VPN guard: internet {where} se aa raha hai (allowed: {', '.join(cfg.network.allowed_countries)}). "
+                            "Vyro/posting ruki hai, sirf clips ban rahe hain.")
+                status(st, f"VPN band hai ({where}): Vyro aur posting ruki hai")
+                vpn_warned = True
+            continue
         try:
             step(cfg, st)
         except vyro.LoginRequired as e:

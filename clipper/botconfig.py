@@ -23,6 +23,13 @@ class VyroSettings(Strict):
     agent_max_steps: int = 30
 
 
+class NetworkSettings(Strict):
+    # VPN guard: Vyro, posting and submitting only run while the internet appears to come
+    # from one of these countries (your own VPN app must be connected).
+    vpn_required: bool = False
+    allowed_countries: list[str] = ["US", "GB", "CA", "AU"]
+
+
 class YouTubeSettings(Strict):
     enabled: bool = True
     token_file: str
@@ -53,6 +60,7 @@ class Page(Strict):
 
 class BotConfig(Strict):
     vyro: VyroSettings = Field(default_factory=VyroSettings)
+    network: NetworkSettings = Field(default_factory=NetworkSettings)
     loop_minutes: int = 10
     pages: list[Page] = []
     clip_defaults: dict = {}  # any Campaign field (crop_mode, whisper_model, captions, ...)
