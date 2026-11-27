@@ -1,25 +1,19 @@
 # 💎 Rare Cash
 
-**Vyro clipping bot with a dashboard, running 24x7.** Ek program chalao, browser mein dashboard khulega. Wahan se sab control karo:
+**Vyro clipping bot with a dashboard, 24x7.** `RareCash.exe` chalao, browser mein dashboard khulega, wahan se sab control karo.
 
-- **Bot ON / OFF**: ek button se
-- **Pages**: add, edit, ON/OFF karo, YouTube connect karo, Instagram token daalo
-- **Add Video**: apni video (link ya file upload) ya Vyro campaign ka link daalo
-- **Campaigns**: Vyro se aaye campaigns, kaunse chal rahe hain, kaunse skip hue aur kyun
-- **Clips**: saare clips video preview ke saath, viral score, kahan post hua, kitne views, Vyro submit hua ya nahi. Kisi clip ko "Pehle post" ya "Skip" kar sakte ho
-- **Schedule**: kaunsa page kab post karega, aaj kitne post hue, agla Vyro scan kab hai
-- **Earnings**: estimated kamai, views per day ka chart, page-wise kamai, top posts
-- **Logs**: bot abhi kya kar raha hai, live
-- **Settings**: Claude API key, Vyro login, clip style (face/blur, subtitles), scan timing
-
-Bot ye sab apne aap karta hai:
-1. Vyro pe naye campaigns dhundhta hai (tumhare logged-in account se)
-2. Har campaign ko sahi niche page pe bhejta hai, baaki skip karta hai
+Bot apne aap:
+1. Vyro (app.vyro.com) pe naye campaigns dhundhta hai, tumhare logged-in account se
+2. Har campaign ko sahi niche page pe bhejta hai (podcast / gaming / comedy / finance…), baaki skip
 3. Campaign join karta hai, rules aur material padhta hai
-4. Material download → transcript → Claude AI viral moments chunta hai → 9:16 + animated subtitles
-5. Page ke YouTube Shorts + Instagram Reels pe post karta hai (rate limit ke saath)
+4. Material → transcript → Claude AI viral moments chunta hai → 9:16 clip: subtitles, upar hook title, progress bar, slow zoom, background music
+5. **YouTube Shorts, Instagram Reels aur TikTok** pe post karta hai (rate limit ke saath)
 6. Post ka link Vyro pe submit karta hai
-7. Har 2 ghante views update karta hai (Earnings tab ke liye)
+7. Views update karta hai, aur Vyro se **asli kamai** padhta hai
+8. Telegram pe alerts bhejta hai, aur phone se `/on` `/off` `/status` se control hota hai
+
+Dashboard: Bot ON/OFF · Pages · Add Video · Campaigns · Clips (preview) · Schedule · Earnings (andaza + Vyro asli) · Logs · Settings
+(Vyro login, built-in VPN, Telegram, phone access, TikTok app, clip style, auto-start).
 
 ---
 
@@ -74,35 +68,36 @@ Dhyan rakho:
 
 ---
 
-## 1. Install (ek baar, Windows)
+## 1. Install (Windows): RareCash.exe
 
-1. Code download karo: https://github.com/Fardin99200/Fardin99200/archive/refs/heads/claude/happy-goodall-bnoyd8.zip
-   → ZIP pe right-click → **Extract All** (jaise `C:\RareCash` mein)
-2. **Python 3.10+** install karo (https://python.org/downloads). Install screen pe **"Add python.exe to PATH" tick karna**.
-3. Extract kiye folder mein **`RareCash_Setup.bat` double-click** karo. Ye FFmpeg, saare packages aur bot ka browser khud install karta hai (5-10 minute).
-   Windows "protected your PC" bole to **More info → Run anyway**.
+1. GitHub pe login karke latest build kholo: repo → **Actions** → "Build RareCash.exe (Windows)" → sabse upar wala run →
+   neeche **Artifacts → RareCash-windows** download karo (~675 MB). Download ke liye GitHub mein login hona chahiye.
+2. ZIP extract karo (andar ek aur zip ho to wo bhi), folder ko `C:\RareCash` jaisi jagah rakho.
+3. **`RareCash.exe` double-click.** Windows "protected your PC" bole to **More info → Run anyway**.
+   Kaali window khuli rakho, wo band = Rare Cash band.
 
-## 2. Rare Cash chalao
+Python, FFmpeg, browser, VPN engine sab exe ke andar hain. Tumhara data (bot.db, bot.yaml, .env, output, vpn, music) isi folder mein banta hai.
+Naya version: naya ZIP extract karke purane folder ki ye files/folders copy kar lo: `bot.db`, `bot.yaml`, `.env`, `tokens`, `vpn`, `browser_profile*`, `output`, `music`.
 
-**`start_rarecash.bat` double-click karo.** Browser mein http://localhost:8000 khulega. Phir dashboard mein:
+<details><summary>Exe ke bina (Python se)</summary>
 
-1. **Settings** → Claude API key daalo (https://platform.claude.com) → Save
-2. **Settings** → **🔑 Vyro Login** → browser khulega, Vyro pe login karo, **window band kar do**.
-   Login ke baad jis page pe campaigns dikhte hain, uska link "Campaigns page ka link" mein daalo.
-3. **Pages** → **＋ Naya page** → niche button (podcast/gaming/comedy/finance) dabao, details bharo → Save.
-   Har niche ke liye ek page.
-4. Har page pe **Connect** (YouTube) dabao aur us page ka channel chuno. Instagram ke liye page edit karke user ID + token daalo.
-5. Upar **Bot ON** kar do. Bas!
+Python 3.10+ install karo ("Add to PATH" tick), phir folder mein `RareCash_Setup.bat` double-click, uske baad `start_rarecash.bat`.
+</details>
 
-Dashboard pe agar kuch missing hai to upar **"Zaroori / Dhyan do"** box mein dikhega, saath mein "Fix karo" link.
+## 2. Pehli baar setup (dashboard mein)
 
-PC on hote hi Rare Cash apne aap chalu ho, uske liye:
-1. Windows search mein **Task Scheduler** kholo → "Create Basic Task"
-2. Trigger: **When I log on**
-3. Action: Start a program → `start_rarecash.bat` (Start in: is folder ka path)
+1. **Settings → Claude AI**: API key (https://platform.claude.com) → Save
+2. **Settings → Vyro → 🔑 Vyro Login**: browser khulega (tumhara Edge/Chrome) → app.vyro.com pe email daalo →
+   email mein aaya **code** wahin daalo, ya email ka **login link** copy karke "Link kholo" box mein paste karo →
+   login ke baad **window band karo**. Rare Cash khud check karta hai: "✓ logged in" dikhna chahiye.
+   Google se login block ho to **"🌐 Normal browser se"** use karo (login karke window band karo, ya "Login ho gaya" dabao).
+   Vyro ke andar apne YouTube/Instagram/TikTok accounts bhi connect kar dena (views wahi se track hote hain).
+3. **Pages → ＋ Naya page**: har niche ka ek page (YouTube channel / Instagram / TikTok accounts tum khud banao)
+4. Har page pe **Connect** (YouTube, TikTok) aur Instagram token
+5. Upar **Bot ON**. Bas!
 
-**PC ko sone mat do:** Settings → System → Power → "Sleep: Never". Internet aur PC on rehna zaroori hai.
-Rare Cash crash ho jaye to `start_rarecash.bat` 30 second mein dobara chala deta hai.
+Kuch missing ho to Dashboard pe "Zaroori / Dhyan do" box mein "Fix karo" link ke saath dikhta hai.
+**Auto-start:** Settings → Bot → "PC on hote hi Rare Cash apne aap chalu ho". PC ka sleep band rakho (Settings → Power → Never).
 
 ## 3. YouTube setup (ek baar)
 
@@ -131,6 +126,44 @@ Naye project se upload hui videos YouTube private lock kar sakta hai jab tak API
 
 Instagram ka limit 50 posts/24 ghante/account hai, isliye bot ke default 3/din safe hain.
 
+## 5. TikTok setup
+
+1. https://developers.tiktok.com → app banao → **Login Kit (Desktop)** + **Content Posting API** (Direct Post ON)
+2. Scopes: `video.publish`, `video.list`, `user.info.basic`
+3. Redirect URI: Settings → TikTok app mein jo dikhta hai (jaise `http://127.0.0.1:8000/tiktok/callback`)
+4. Client key + secret Settings mein → Save → Pages → TikTok **Connect**
+5. **TikTok ka rule:** app audit hone tak videos sirf **private** post hoti hain (aur account bhi private chahiye).
+   Private posts Vyro pe submit nahi hote. Public ke liye TikTok developer portal se audit karwao, phir page mein privacy "Public" karo.
+   Agar portal localhost redirect na le, koi bhi apna https page do: login ke baad address bar ka poora link Settings → TikTok "Connect" box mein paste karo.
+
+## 6. Telegram alerts + phone control
+
+Telegram → **@BotFather** → `/newbot` → token copy → Settings → Telegram mein daalo → Save →
+apne bot ko `/start` bhejo → Settings mein "Use karo" → "Test".
+Alerts: har post, errors, VPN gira, login expire, naya campaign, roz ka hisaab (21:00).
+Commands: `/status` `/on` `/off` `/run` `/scan` `/vpn_on` `/vpn_off` `/today`. Sirf tumhari chat se commands chalte hain.
+
+## 7. Phone se dashboard (same Wi-Fi)
+
+Settings → Phone se dashboard → PIN banao → "Phone access ON" → Save → Rare Cash band karke dobara kholo
+(Windows Firewall poochhe to Private networks pe Allow). Phone browser mein `http://<PC ka IP>:8000` (Settings mein dikhta hai) → PIN.
+5 galat PIN = 5 minute lock. PIN badalne pe purane phone logins band ho jaate hain.
+
+## 8. Clip style
+
+Settings → Clips: face / center / blur, subtitles, **hook title** (upar bold box), **progress bar**, **slow zoom**, **music**.
+Music ke liye Rare Cash folder ke `music` folder mein **copyright-free** .mp3 daalo (khali = no music). Copyright wale gaane = video block ho sakti hai.
+
+## 9. Asli kamai (Vyro)
+
+Bot har 12 ghante Vyro se balance, pending aur har submission ka status/kamai padhta hai (sirf padhta hai: withdraw, payout,
+bank wale buttons kabhi click nahi karta). Earnings → "⟳ Vyro se asli kamai lao" se abhi bhi kar sakte ho.
+
+## Duplicate se bachav
+
+Ek hi video alag links se aaye (youtu.be / youtube.com / shorts / Drive ke alag link) ya same file dobara aaye,
+to bot nayi clips nahi banata: purani clips hi use karta hai, aur ek clip ek platform pe ek hi baar post hoti hai.
+
 ## Bina dashboard ke (advanced)
 
 ```bat
@@ -156,5 +189,7 @@ Saari settings `bot.yaml` mein bhi hain (dashboard isi file ko edit karta hai). 
 | `clipper/pipeline.py` | download → transcript → AI selection → render |
 | `clipper/selector.py` | Claude se viral moments + title/hashtags |
 | `clipper/render.py` | 9:16 face-crop/blur, animated subtitles |
-| `clipper/uploader.py` / `clipper/instagram.py` | YouTube / Instagram posting + views |
+| `clipper/uploader.py` / `clipper/instagram.py` / `clipper/tiktok.py` | YouTube / Instagram / TikTok posting + views |
+| `clipper/telegram.py` | Telegram alerts + commands |
+| `clipper/vpn.py` / `clipper/network.py` | built-in VPN + VPN guard |
 | `clipper/state.py` | SQLite memory (`bot.db`) |

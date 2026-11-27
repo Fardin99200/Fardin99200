@@ -417,6 +417,36 @@ def tiktok_paste(body: TikTokPasteIn):
     return {"ok": True, "message": f"TikTok connect ho gaya ({page})"}
 
 
+def startup_file() -> Path | None:
+    appdata = os.environ.get("APPDATA")
+    if sys.platform != "win32" or not appdata:
+        return None
+    return Path(appdata) / "Microsoft/Windows/Start Menu/Programs/Startup/RareCash.cmd"
+
+
+@app.get("/api/autostart")
+def autostart_get():
+    f = startup_file()
+    return {"supported": f is not None, "enabled": bool(f and f.exists())}
+
+
+@app.post("/api/autostart")
+def autostart_set(t: Toggle):
+    f = startup_file()
+    if f is None:
+        raise HTTPException(400, "Auto-start sirf Windows pe hai")
+    if not t.enabled:
+        f.unlink(missing_ok=True)
+        return {"ok": True, "message": "Auto-start band"}
+    if getattr(sys, "frozen", False):
+        run = f'"{sys.executable}" --no-browser'
+    else:
+        run = f'"{sys.executable}" "{APP_DIR / "rarecash.py"}" --no-browser'
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(f'@echo off\r\ncd /d "{APP_DIR}"\r\nstart "Rare Cash" /min {run}\r\n', encoding="utf-8")
+    return {"ok": True, "message": "Ab PC on hote hi Rare Cash chalu ho jayega"}
+
+
 @app.post("/api/vyro/sync-earnings")
 def vyro_sync_earnings():
     db().set("earnings_sync", "1")
@@ -1015,10 +1045,10 @@ def selftest() -> int:
                        check=True)
         words = [{"start": 0.2 + i * 0.4, "end": 0.5 + i * 0.4, "word": w} for i, w in enumerate("rare cash test ok".split())]
         out = r.render_clip(src, 0, 2.5, [{"start": 0, "end": 2, "text": "", "words": words}], d / "clip.mp4",
-                            Campaign(crop_mode="face"))
+                            Campaign(crop_mode="face"), hook="Rare Cash self test")
         w, h, _ = r.probe(out)
         assert (w, h) == (1080, 1920), (w, h)
-        return f"{w}x{h} with captions"
+        return f"{w}x{h} with captions, hook, zoom, progress bar"
 
     def whisper():
         import faster_whisper  # noqa: F401
@@ -1053,6 +1083,11 @@ def selftest() -> int:
         out = subprocess.run([str(exe), "--version"], capture_output=True, text=True, timeout=20)
         return (out.stdout or out.stderr).strip()[:40]
 
+    def modules():
+        from clipper import telegram as _t, tiktok as _k, vpn as _v, vyro as _y  # noqa: F401
+        import multipart  # noqa: F401  (file uploads in Add Video)
+        return "telegram, tiktok, vpn, vyro"
+
     def web_ui():
         assert (WEB / "index.html").exists() and (WEB / "app.js").exists()
         from fastapi.testclient import TestClient
@@ -1064,7 +1099,7 @@ def selftest() -> int:
 
     print("Rare Cash self-test")
     for name, fn in [("ffmpeg", ffmpeg), ("video render", render), ("whisper", whisper), ("opencv face", opencv),
-                     ("browser", browser), ("youtube api", youtube_api), ("vpn engine", vpn_engine), ("dashboard", web_ui)]:
+                     ("browser", browser), ("youtube api", youtube_api), ("vpn engine", vpn_engine), ("modules", modules), ("dashboard", web_ui)]:
         check(name, fn)
     print("ALL OK" if all(results) else "SOME CHECKS FAILED")
     return 0 if all(results) else 1

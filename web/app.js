@@ -742,6 +742,7 @@ async function renderSettings() {
         <div class="card">
           <h2>Bot</h2>
           <label class="field"><span>Round har kitne minute</span><input type="number" min="1" name="loop_minutes" value="${s.loop_minutes}"></label>
+          <label class="check"><input type="checkbox" id="autoStart"> PC on hote hi Rare Cash apne aap chalu ho (Windows)</label>
           <label class="check"><input type="checkbox" id="darkTheme" ${localStorage.theme === "dark" ? "checked" : ""}> Dark theme</label>
         </div>
       </div>
@@ -832,6 +833,11 @@ async function renderSettings() {
       </div>
       <div><button class="primary" type="submit">Save settings</button></div>
     </form>`;
+  api("/api/autostart").then((a) => {
+    const box = $("#autoStart"); if (!box) return;
+    box.checked = a.enabled; box.disabled = !a.supported;
+    box.addEventListener("change", async () => { try { toast((await api("/api/autostart", { method: "POST", body: { enabled: box.checked } })).message); } catch (err) { toast(err.message, true); box.checked = !box.checked; } });
+  }).catch(() => {});
   $("#darkTheme").addEventListener("change", (e) => {
     localStorage.theme = e.target.checked ? "dark" : "light";
     if (e.target.checked) document.documentElement.dataset.theme = "dark"; else delete document.documentElement.dataset.theme;
