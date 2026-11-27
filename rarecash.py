@@ -51,7 +51,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import bot
-from clipper import browser_agent, network, vpn
+from clipper import browser_agent, network, telegram, vpn
 from clipper.botconfig import BotConfig, Page
 from clipper.state import State
 
@@ -270,6 +270,33 @@ def network_check(refresh: bool = False):
 
 class Toggle(BaseModel):
     enabled: bool
+
+
+@app.post("/api/telegram/test")
+def telegram_test():
+    c = cfg()
+    if not telegram.token():
+        raise HTTPException(400, "Pehle Telegram bot token daalo aur Save karo")
+    if not c.telegram.chat_id:
+        raise HTTPException(400, "Chat id nahi hai: apne bot ko Telegram pe /start bhejo, phir 'Use karo' dabao")
+    try:
+        telegram.call("sendMessage", chat_id=c.telegram.chat_id, text="💎 Rare Cash test: alerts kaam kar rahe hain ✅")
+    except Exception as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "message": "Telegram pe test message bheja"}
+
+
+@app.post("/api/telegram/use-pending")
+def telegram_use_pending():
+    st, c = db(), cfg()
+    chat = st.get("telegram_pending_chat", "")
+    if not chat:
+        raise HTTPException(400, "Abhi koi chat nahi mili: Telegram pe apne bot ko /start bhejo")
+    c.telegram.chat_id = chat
+    c.telegram.enabled = True
+    c.save(bot.CONFIG)
+    st.set("telegram_pending_chat", "")
+    return {"ok": True, "message": f"Chat {chat} connect ho gaya"}
 
 
 @app.get("/api/vpn")
@@ -726,6 +753,8 @@ def settings_get():
     return {
         "vyro": c.vyro.model_dump(),
         "network": c.network.model_dump(),
+        "telegram": {**c.telegram.model_dump(), "token_set": bool(telegram.token()),
+                     "pending_chat": db().get("telegram_pending_chat", "")},
         "loop_minutes": c.loop_minutes,
         "clip": {k: c.clip_defaults.get(k, getattr(d, k)) for k in CLIP_KEYS},
         "api_key_set": bool(os.getenv("ANTHROPIC_API_KEY")),
@@ -739,6 +768,8 @@ def settings_get():
 class SettingsIn(BaseModel):
     vyro: dict | None = None
     network: dict | None = None
+    telegram: dict | None = None
+    telegram_token: str | None = None
     loop_minutes: int | None = None
     clip: dict | None = None
     api_key: str | None = None
@@ -750,6 +781,10 @@ def settings_save(body: SettingsIn):
     if body.vyro:
         c.vyro = c.vyro.model_copy(update={k: v for k, v in body.vyro.items() if k in c.vyro.model_fields})
         c.vyro = type(c.vyro)(**c.vyro.model_dump())  # re-validate
+    if body.telegram is not None:
+        c.telegram = type(c.telegram)(**{**c.telegram.model_dump(), **body.telegram})
+    if body.telegram_token:
+        env_set("TELEGRAM_BOT_TOKEN", body.telegram_token.strip())
     if body.network is not None:
         net = {**c.network.model_dump(), **body.network}
         net["allowed_countries"] = [x.strip().upper() for x in net.get("allowed_countries", []) if x.strip()]

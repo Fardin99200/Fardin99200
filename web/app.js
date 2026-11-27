@@ -703,6 +703,28 @@ async function renderSettings() {
           <label class="check"><input type="checkbox" id="darkTheme" ${localStorage.theme === "dark" ? "checked" : ""}> Dark theme</label>
         </div>
       </div>
+      <div class="card" id="tgCard">
+        <div class="card-head"><h2>Telegram alerts + phone control</h2>${s.telegram.enabled && s.telegram.chat_id && s.telegram.token_set ? chip("good", "✓", "connected") : chip("", "○", "off")}</div>
+        <p class="muted" style="margin-top:0">Post hua, error aaya, VPN gira, login expire hua: sab phone pe aayega. Phone se <code>/on</code> <code>/off</code> <code>/status</code> <code>/run</code> <code>/today</code> bhej ke bot control karo.</p>
+        <ol class="hint" style="margin:0 0 12px;padding-left:18px">
+          <li>Telegram mein <b>@BotFather</b> kholo → <code>/newbot</code> → naam do → jo <b>token</b> mile wo neeche daalo → Save</li>
+          <li>Apne naye bot ko Telegram pe <code>/start</code> bhejo</li>
+          <li>Yahan "Use karo" dabao, phir "Test" dabao</li>
+        </ol>
+        <div class="form-grid">
+          <label class="field"><span>Bot token ${s.telegram.token_set ? "(set hai)" : ""}</span><input type="password" name="tg_token" autocomplete="off" placeholder="${s.telegram.token_set ? "•••••• (badalna ho to hi daalo)" : "123456:ABC..."}"></label>
+          <label class="field"><span>Chat id</span><input type="text" name="tg_chat" value="${esc(s.telegram.chat_id)}" placeholder="/start bhejne ke baad apne aap aayega"></label>
+        </div>
+        ${s.telegram.pending_chat ? `<div class="alert"><b>Naya chat mila</b><span>${esc(s.telegram.pending_chat)}</span><a href="javascript:tgUse()">Use karo →</a></div>` : ""}
+        <div class="row" style="margin-bottom:10px">
+          <label class="check" style="margin:0"><input type="checkbox" name="tg_enabled" ${s.telegram.enabled ? "checked" : ""}> Telegram ON</label>
+          <label class="check" style="margin:0"><input type="checkbox" name="tg_posts" ${s.telegram.notify_posts ? "checked" : ""}> Har post</label>
+          <label class="check" style="margin:0"><input type="checkbox" name="tg_errors" ${s.telegram.notify_errors ? "checked" : ""}> Errors</label>
+          <label class="check" style="margin:0"><input type="checkbox" name="tg_campaigns" ${s.telegram.notify_campaigns ? "checked" : ""}> Naye campaigns</label>
+          <label class="check" style="margin:0"><input type="checkbox" name="tg_summary" ${s.telegram.notify_summary ? "checked" : ""}> Roz ka hisaab (${s.telegram.summary_hour}:00)</label>
+        </div>
+        <button type="button" onclick="tgTest()">✈ Test message bhejo</button>
+      </div>
       <div class="card" id="vpnCard">
         <div class="card-head"><h2>VPN (built-in)</h2>${vpnStateChip(vp)}</div>
         <div class="vpn-hero">
@@ -752,6 +774,8 @@ async function renderSettings() {
     await act(() => api("/api/settings", { method: "POST", body: {
       vyro: { start_url: fd.start_url, scan_every_hours: +fd.scan_every_hours, min_cpm_usd: +fd.min_cpm_usd, max_new_campaigns_per_scan: +fd.max_new_campaigns_per_scan, max_materials_per_campaign: +fd.max_materials_per_campaign, headless: f.headless.checked },
       network: { vpn_required: f.vpn_required.checked, allowed_countries: (fd.allowed_countries || "").split(",") },
+      telegram: { enabled: f.tg_enabled.checked, chat_id: (fd.tg_chat || "").trim(), notify_posts: f.tg_posts.checked, notify_errors: f.tg_errors.checked, notify_campaigns: f.tg_campaigns.checked, notify_summary: f.tg_summary.checked },
+      telegram_token: fd.tg_token || null,
       loop_minutes: +fd.loop_minutes,
       clip: { crop_mode: fd.crop_mode, whisper_model: fd.whisper_model, min_seconds: +fd.min_seconds, max_seconds: +fd.max_seconds, caption_highlight_color: (fd.caption_highlight_color || "FFFF00").replace("#", "").toUpperCase(), captions: f.captions.checked, caption_uppercase: f.caption_uppercase.checked },
       api_key: fd.api_key || null,
@@ -778,6 +802,8 @@ async function vyroLogin(mode = "bot", link = "") {
   await act(() => api("/api/vyro/login", { method: "POST", body: { mode, link: (link || "").trim() } }));
   setTimeout(() => STATE.tab === "settings" && renderSettings(), 15000);
 }
+async function tgTest() { await act(() => api("/api/telegram/test", { method: "POST" })); }
+async function tgUse() { await act(() => api("/api/telegram/use-pending", { method: "POST" })); renderSettings(); }
 async function vyroLoginDone() { await act(() => api("/api/vyro/login-done", { method: "POST" })); setTimeout(renderSettings, 20000); }
 async function vyroCheck() { await act(() => api("/api/vyro/check", { method: "POST" })); setTimeout(renderSettings, 20000); }
 

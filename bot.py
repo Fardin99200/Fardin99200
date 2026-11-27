@@ -27,7 +27,8 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-from clipper import instagram, network, pipeline, uploader, vpn, vyro
+from clipper import instagram, network, pipeline, telegram, uploader, vpn, vyro
+from clipper.telegram import notify
 from clipper.botconfig import BotConfig, Page
 from clipper import browser_agent
 from clipper.browser_agent import Browser
@@ -145,6 +146,8 @@ def read_campaign(b: Browser, cfg: BotConfig, st: State, url: str, title: str, d
     else:
         st.add_campaign(url, title, merged, page if ok else "", new_status)
     log.info(f"  {'+' if ok else 'skip'} {title or url} -> page '{page}' ({len(merged['material_links'])} links)")
+    if ok:
+        notify("campaigns", f"🆕 Naya campaign: {title or url}\nPage: {page} · pay: {merged.get('pay_rate') or '?'}")
     return bool(ok)
 
 
@@ -235,9 +238,11 @@ def post_due(cfg: BotConfig, st: State) -> None:
                 st.record_post(clip["id"], platform, page.name, url, None, pid,
                                "not_needed" if is_manual(clip["campaign_url"]) else None)
                 log.info(f"  -> {url}")
+                notify("posts", f"✅ Post ho gaya ({page.name} · {platform})\n{meta['title']}\n{url}")
             except Exception as e:
                 st.record_post(clip["id"], platform, page.name, None, str(e)[:500])
                 log.warning(f"  post failed: {e}")
+                notify("errors", f"⚠️ Post fail ({page.name} · {platform}): {str(e)[:200]}", dedupe_minutes=60)
 
 
 def pick_clip(st: State, page: str, platform: str):
@@ -283,6 +288,8 @@ def submit_due(cfg: BotConfig, st: State) -> None:
                 ok, notes = vyro.submit_post(b, cfg, p["campaign_url"], p["url"], p["platform"],
                                              page.handles if page else [])
                 st.record_submission(p["clip_id"], p["platform"], ok, None if ok else notes[:500])
+                if not ok:
+                    notify("errors", f"⚠️ Vyro submit fail: {p['url']}\n{notes[:200]}", dedupe_minutes=60)
                 log.info(f"  {'OK' if ok else 'FAILED'} {p['url']} {'' if ok else notes[:150]}")
             except vyro.LoginRequired:
                 raise
@@ -420,6 +427,7 @@ def vpn_check(cfg: BotConfig, st: State) -> bool:
 
 
 def cycle(cfg: BotConfig, st: State) -> None:
+    notify.cfg = cfg
     steps = [make_clips, post_due, submit_due, refresh_stats]
     if time.time() - float(st.get("last_scan", "0")) >= cfg.vyro.scan_every_hours * 3600 or st.campaigns("pending"):
         steps.insert(0, scan)
@@ -433,6 +441,7 @@ def cycle(cfg: BotConfig, st: State) -> None:
                 log.warning(f"VPN guard: internet {where} se aa raha hai (allowed: {', '.join(cfg.network.allowed_countries)}). "
                             "Vyro/posting ruki hai, sirf clips ban rahe hain.")
                 status(st, f"VPN band hai ({where}): Vyro aur posting ruki hai")
+                notify("errors", f"🔴 VPN band hai ({where}). Vyro aur posting ruki hai.", dedupe_minutes=30)
                 vpn_warned = True
             continue
         try:
@@ -441,10 +450,53 @@ def cycle(cfg: BotConfig, st: State) -> None:
             # clipping + posting keep running; only Vyro steps wait for a new login
             st.set("login_required", "1")
             log.error(f"{step.__name__}: {e}")
-        except Exception:
+            notify("errors", "🔑 Vyro login expire ho gaya. Dashboard → Settings → Vyro Login.", dedupe_minutes=180)
+        except Exception as e:
             log.error(f"{step.__name__} crashed:\n{traceback.format_exc()}")
+            notify("errors", f"❌ {step.__name__} mein error: {str(e)[:200]}", dedupe_minutes=60)
     st.set("last_cycle", time.time())
     log.info(f"Status: {st.summary()}")
+
+
+def today_text(st: State) -> str:
+    since = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0).isoformat()
+    q = lambda sql: st.db.execute(sql, (since,)).fetchone()[0]
+    clips = q("SELECT COUNT(*) FROM clips WHERE created_at>=?")
+    posts = q("SELECT COUNT(*) FROM posts WHERE status='posted' AND posted_at>=?")
+    subs = q("SELECT COUNT(*) FROM posts WHERE vyro_status='submitted' AND posted_at>=?")
+    views = st.db.execute("SELECT COALESCE(SUM(views),0) FROM posts").fetchone()[0]
+    return (f"📊 Aaj ka hisaab\nClips bane: {clips}\nPosts: {posts}\nVyro submitted: {subs}\n"
+            f"Total views (sab posts): {views:,}")
+
+
+def telegram_handlers() -> dict:
+    def vpn_on(st):
+        name = st.get("vpn_config", "") or next((c["name"] for c in vpn.list_configs()), "")
+        if not name:
+            return "Koi VPN server add nahi hai (Settings → VPN)"
+        st.set("vpn_config", name)
+        st.set("vpn_on", "1")
+        threading.Thread(target=lambda: vpn.tunnel.watchdog(True, name), daemon=True).start()
+        return f"VPN connect ho raha hai: {name}"
+
+    def vpn_off(st):
+        st.set("vpn_on", "0")
+        vpn.tunnel.stop()
+        return "VPN OFF"
+
+    def status_cmd(st):
+        t = vpn.tunnel.status()
+        return (f"Bot: {'ON' if st.get('enabled', '1') == '1' else 'OFF'}\n{st.get('status', '')}\n"
+                f"VPN: {t['state']} {t['country']}\n{st.summary()}")
+
+    return {
+        "start": lambda st: telegram.HELP, "help": lambda st: telegram.HELP, "status": status_cmd,
+        "on": lambda st: (st.set("enabled", "1"), "Bot ON ✅")[1],
+        "off": lambda st: (st.set("enabled", "0"), "Bot OFF ⏸ (abhi wala kaam khatam karke rukega)")[1],
+        "run": lambda st: (st.set("run_now", "1"), "Ek round abhi chal raha hai ▶")[1],
+        "scan": lambda st: (st.set("last_scan", "0"), st.set("run_now", "1"), "Vyro scan shuru 🔎")[2],
+        "vpn_on": vpn_on, "vpn_off": vpn_off, "today": today_text,
+    }
 
 
 def run_forever(stop: threading.Event | None = None, once: bool = False) -> None:
@@ -453,6 +505,14 @@ def run_forever(stop: threading.Event | None = None, once: bool = False) -> None
     stop = stop or threading.Event()
     st = State("bot.db")
     log.info("Rare Cash bot engine started")
+    if not once:
+        def cfg_now():
+            try:
+                return BotConfig.load(CONFIG)
+            except Exception:
+                return BotConfig()
+        threading.Thread(target=telegram.command_loop, args=(stop, cfg_now, lambda: State("bot.db"), telegram_handlers()),
+                         daemon=True, name="rarecash-telegram").start()
     last_vpn = 0.0
     while not stop.is_set():
         if time.time() - last_vpn > 20:  # keep the built-in VPN up while it's switched ON
@@ -476,6 +536,12 @@ def run_forever(stop: threading.Event | None = None, once: bool = False) -> None
         if st.get("login_verify") == "1":
             st.set("login_verify", "0")
             verify_login(cfg, st)
+
+        notify.cfg = cfg
+        day = datetime.now().strftime("%Y-%m-%d")
+        if datetime.now().hour >= cfg.telegram.summary_hour and st.get("summary_day") != day:
+            st.set("summary_day", day)
+            notify("summary", today_text(st))
 
         if st.get("enabled", "1") == "1" or st.get("run_now") == "1" or once:
             st.set("run_now", "0")

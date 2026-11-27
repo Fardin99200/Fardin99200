@@ -30,6 +30,16 @@ class NetworkSettings(Strict):
     allowed_countries: list[str] = ["US", "GB", "CA", "AU"]
 
 
+class TelegramSettings(Strict):
+    enabled: bool = False
+    chat_id: str = ""            # your chat with the bot (token lives in .env as TELEGRAM_BOT_TOKEN)
+    notify_posts: bool = True
+    notify_errors: bool = True
+    notify_campaigns: bool = True
+    notify_summary: bool = True  # daily summary at summary_hour
+    summary_hour: int = 21
+
+
 class YouTubeSettings(Strict):
     enabled: bool = True
     token_file: str
@@ -61,6 +71,7 @@ class Page(Strict):
 class BotConfig(Strict):
     vyro: VyroSettings = Field(default_factory=VyroSettings)
     network: NetworkSettings = Field(default_factory=NetworkSettings)
+    telegram: TelegramSettings = Field(default_factory=TelegramSettings)
     loop_minutes: int = 10
     pages: list[Page] = []
     clip_defaults: dict = {}  # any Campaign field (crop_mode, whisper_model, captions, ...)
